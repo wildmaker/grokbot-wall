@@ -11,7 +11,8 @@
     "checkins:login": "node luma-checkin-poller.mjs --login",
     "checkins:on": "node luma-checkin-poller.mjs --on",
     "checkins:once": "node luma-checkin-poller.mjs --once",
-    "checkins:status": "node luma-checkin-poller.mjs --status"
+    "checkins:status": "node luma-checkin-poller.mjs --status",
+    "check:cjk": "node scripts/check-cjk-names.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.63.0"

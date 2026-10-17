@@ -39,7 +39,8 @@ Docker：`docker compose up -d --build`（只监听 127.0.0.1:8787），`./deplo
 
 - 依赖只有 `playwright-core`；服务端与前端都是**纯 Node ESM / 原生浏览器 API**，不要引入构建工具或框架。
 - **没有测试框架、没有 linter、没有 CI**。不要假装跑测试；改完必须手动验证（见下）。
-- 没有任何测试用例文件；`screenshots/` 是人工留档的截图，不要动。
+- 唯一的自动检查是 `npm run check:cjk`（`scripts/check-cjk-names.mjs`）：在临时目录起一份墙，用中文名走 `/allocate → state → 页面字符网格`，验证签到列表和横幅不出现 `?`（需要 `npm install` + 本机 Chrome，不碰真实 `data/state.json`）。
+- `screenshots/` 是人工留档的截图，不要动。
 
 ## 验证方式（没有自动化，必须手验）
 
