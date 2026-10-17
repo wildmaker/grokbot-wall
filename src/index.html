@@ -1118,12 +1118,35 @@ document.addEventListener('keydown', e => {
   if (k === 'escape') { if (!modal.hidden) closeModal(); else if (!desk.hidden) closeDesk(); }
   else if (k === 'd' && DESK) { e.preventDefault(); desk.hidden ? openDesk() : closeDesk(); }
   else if (k === 'm' && DESK) { e.preventDefault(); if (desk.hidden) openDesk(); manualModal(); }
+  else if (k === 'b' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); bgmToggle(); }
   else if (k === 'f') { e.preventDefault(); document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}); }
   else if (k === ' ' && app.mode === 'demo' && desk.hidden) { e.preventDefault(); demoCheckIn(); }
   else if (k === 'e' && e.shiftKey && DESK) exportCsv();
 });
 let resizeT = 0;
 addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(layoutGrid, 150); });
+
+// =====================================================================
+//  BGM (Web Audio: sample-accurate seamless loop; ?music to start on, B to toggle, ?vol=0-1)
+// =====================================================================
+const bgm = { on: params.has('music'), vol: clamp(Number(params.get('vol')), 0, 1) || 0.55, ctx: null, buf: null, node: null, gain: null, ready: false };
+async function bgmStart() {
+  if (!bgm.ready) {
+    bgm.ctx = bgm.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if (!bgm.buf) bgm.buf = await bgm.ctx.decodeAudioData(await (await fetch('/assets/bgm.wav')).arrayBuffer());
+    bgm.gain = bgm.ctx.createGain(); bgm.gain.gain.value = bgm.vol; bgm.gain.connect(bgm.ctx.destination);
+    bgm.ready = true;
+  }
+  if (bgm.ctx.state === 'suspended') await bgm.ctx.resume();
+  if (!bgm.node) { bgm.node = bgm.ctx.createBufferSource(); bgm.node.buffer = bgm.buf; bgm.node.loop = true; bgm.node.connect(bgm.gain); bgm.node.start(0); }
+}
+function bgmToggle() {
+  bgm.on = !bgm.on;
+  if (bgm.on) bgmStart().catch(() => {}); else if (bgm.node) { bgm.node.stop(); bgm.node = null; }
+  toast(bgm.on ? 'music on' : 'music off');
+}
+function bgmArm() { if (!bgm.on) return; bgmStart().catch(() => {}); removeEventListener('pointerdown', bgmArm); removeEventListener('keydown', bgmArm); }
+addEventListener('pointerdown', bgmArm); addEventListener('keydown', bgmArm);
 
 // =====================================================================
 //  BOOT

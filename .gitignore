@@ -10,3 +10,9 @@ dist/
 cloudflared/*.json
 cloudflared/config.yml
 data/codes.json
+
+# 运行日志（make start / make checkins 的后台输出）
+logs/
+
+# 工具生成的会话产物（截图等）
+.openchamber/
