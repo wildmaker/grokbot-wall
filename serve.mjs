@@ -309,7 +309,7 @@ function allocate(body) {
 }
 
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(obj)); };
-const readBody = req => new Promise(r => { let b = ''; req.on('data', d => b += d); req.on('end', () => { try { r(b ? JSON.parse(b) : {}); } catch { r({}); } }); });
+const readBody = req => new Promise(r => { let b = ''; req.setEncoding('utf8'); req.on('data', d => b += d); req.on('end', () => { try { r(b ? JSON.parse(b) : {}); } catch { r({}); } }); });
 const publicState = () => ({ allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
 
 const server = http.createServer(async (req, res) => {

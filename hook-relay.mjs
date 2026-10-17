@@ -5,7 +5,7 @@ const TARGET = process.env.TARGET || 'http://localhost:8787';
 const PORT = Number(process.env.RELAY_PORT || 8790);
 http.createServer(async (req, res) => {
   if (req.method !== 'POST' || req.url.split('?')[0] !== '/webhooks/luma') { res.writeHead(404); return res.end('not found'); }
-  let body = ''; req.on('data', d => { body += d; if (body.length > 1e6) req.destroy(); });
+  let body = ''; req.setEncoding('utf8'); req.on('data', d => { body += d; if (body.length > 1e6) req.destroy(); });
   req.on('end', async () => {
     try {
       const r = await fetch(TARGET + '/webhooks/luma', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-headers': Object.keys(req.headers).join(',') }, body });
