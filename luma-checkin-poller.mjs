@@ -110,6 +110,9 @@ async function launchBrowser(profileDir, headless) {
     executablePath,
     headless,
     viewport: null,
+    // hide the automation fingerprint so Cloudflare's browser check passes on luma.com
+    ignoreDefaultArgs: ['--enable-automation'],
+    args: ['--disable-blink-features=AutomationControlled'],
   });
 }
 
