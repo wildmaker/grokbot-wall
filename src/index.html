@@ -101,6 +101,11 @@
       <span class="dk-poll-track" aria-hidden="true"></span>
       <span id="dk-poll-label">轮询关</span>
     </label>
+    <label class="dk-poll" for="dk-codes" title="开启后，新签到的来宾会分到兑换码并收到邮件；默认关闭，只做签到欢迎">
+      <input id="dk-codes" type="checkbox" role="switch">
+      <span class="dk-poll-track" aria-hidden="true"></span>
+      <span id="dk-codes-label">不发码</span>
+    </label>
     <button id="dk-manual">+ 手动签到</button>
     <button id="dk-export">导出 CSV</button>
     <button id="dk-settings">设置</button>
@@ -179,7 +184,7 @@ const app = {
   guests: new Map(),       // key -> {key,id,name,email,checkedInAt,approval}
   alloc: new Map(),        // key -> allocation
   feed: [],                // allocations newest first
-  config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false },
+  config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false, sendCodes: false },
   labels: (CODES && CODES.labels) || { A: 'Pool A', B: 'Pool B' },
   poolTotals: { A: CODES ? CODES.A.length : 0, B: CODES ? CODES.B.length : 0 },
   poller: null, pollerAt: 0, event: null, lastSync: 0, syncing: false, error: '', initial: true, persist: false, email: null, lastWebhookAt: null, serverPolls: false, failedSyncs: 0, headline: '',
@@ -212,7 +217,8 @@ function localAllocate(body) {
   const used = new Set(); for (const a of app.alloc.values()) for (const c of a.codes) used.add(c.code);
   const pick = pool => { const c = ((CODES && CODES[pool]) || []).find(c => !used.has(c.code)); return c ? { pool, code: c.code, url: c.url } : null; };
   const codes = [];
-  if (app.config.poolMode === 'both') { for (const p of ['A', 'B']) { const c = pick(p); if (c) codes.push(c); } }
+  if (!app.config.sendCodes) { /* codes off: check-in only */ }
+  else if (app.config.poolMode === 'both') { for (const p of ['A', 'B']) { const c = pick(p); if (c) codes.push(c); } }
   else for (const p of (app.config.poolMode === 'B-then-A' ? ['B', 'A'] : ['A', 'B'])) { const c = pick(p); if (c) { codes.push(c); break; } }
   return { key, name: body.name || '', email: body.email || '', checkedInAt: body.checkedInAt || null, source: body.source || 'luma', at: new Date().toISOString(), codes };
 }
@@ -914,8 +920,10 @@ function drawBottom(t, L) {
   // right-aligned status segments
   const seg = [];
   const st = pollStatus(); seg.push([st.text, st.level === 'ok' ? A.rgb : st.level === 'bad' ? [255, 90, 90] : st.level === 'off' ? GREY : [255, 200, 80]]);
-  if (app.server && app.mode !== 'demo' && app.email && app.email.enabled) { const mc = mailCounts(); seg.push([`MAIL ${mc.sent} SENT${mc.failed ? ` · ${mc.failed} FAILED` : ''}`, mc.failed ? [255, 90, 90] : GREY]); }
-  seg.push([`CREDITS LEFT ${pad3(creditsLeft())}`, WHITE]);
+  if (app.config.sendCodes) {
+    if (app.server && app.mode !== 'demo' && app.email && app.email.enabled) { const mc = mailCounts(); seg.push([`MAIL ${mc.sent} SENT${mc.failed ? ` · ${mc.failed} FAILED` : ''}`, mc.failed ? [255, 90, 90] : GREY]); }
+    seg.push([`CREDITS LEFT ${pad3(creditsLeft())}`, WHITE]);
+  }
   let rx = cols - 1;
   for (let i = seg.length - 1; i >= 0; i--) { const [txt, c] = seg[i]; rx -= txt.length; put(rx, br, txt, c); if (i) { rx -= 5; put(rx, br, '  ·  ', DIM); } }
 }
@@ -1011,7 +1019,7 @@ function renderDesk() {
   renderPollToggle(); renderStatus();
   const mc = mailCounts();
   const modeLabel = { boot: '启动', demo: '演示', luma: 'Luma', manual: '手动' }[app.mode] || app.mode;
-  $('#dk-mode').textContent = `${modeLabel} · 已签到 ${app.feed.length} · 剩余兑换码 ${creditsLeft()}${app.persist ? '' : app.mode === 'demo' ? ' · 不保存' : ' · 仅本机'}${app.server && app.mode !== 'demo' ? (app.email && app.email.enabled ? ` · ✉ 已发 ${mc.sent}${mc.failed ? `，失败 ${mc.failed}` : ''}${app.email.dryRun ? '（试跑）' : ''}` : ' · ✉ 关闭') : ''}`;
+  $('#dk-mode').textContent = `${modeLabel} · 已签到 ${app.feed.length}${app.config.sendCodes ? ` · 剩余兑换码 ${creditsLeft()}` : ' · 不发码'}${app.persist ? '' : app.mode === 'demo' ? ' · 不保存' : ' · 仅本机'}${app.server && app.mode !== 'demo' && app.config.sendCodes ? (app.email && app.email.enabled ? ` · ✉ 已发 ${mc.sent}${mc.failed ? `，失败 ${mc.failed}` : ''}${app.email.dryRun ? '（试跑）' : ''}` : ' · ✉ 关闭') : ''}`;
   const list = guestRows();
   deskList.innerHTML = list.slice(0, 300).map(g => `<div class="g-row${g.key === selectedKey ? ' sel' : ''}" data-key="${esc(g.key)}">
       <div><div class="g-name">${esc(g.name || g.email || '来宾')}</div><div class="g-email">${esc(g.email || '')}</div></div>
@@ -1032,6 +1040,10 @@ function renderPollToggle() {
   input.checked = enabled;
   input.disabled = !app.server;
   label.textContent = enabled ? '轮询开' : '轮询关';
+  const ci = $('#dk-codes'), send = Boolean(app.config.sendCodes);
+  ci.checked = send;
+  ci.disabled = !app.server;
+  $('#dk-codes-label').textContent = send ? '发码开' : '不发码';
 }
 function mailBadge(a) {
   const m = a && a.mail; if (!m || m.status === 'skipped') return '<span></span>';
@@ -1040,6 +1052,7 @@ function mailBadge(a) {
 }
 function mailLine(a) {
   const m = a.mail;
+  if (!a.codes.length && !app.config.sendCodes) return '本场不发码';
   if (!app.email || !app.email.enabled) return '邮件未开启 — 在 .env 设置 RESEND_API_KEY 后重启 serve.mjs';
   if (!m) return '尚未发送';
   if (m.status === 'sent') return `${fmtHM(m.at)} 已发至 ${m.to}`;
@@ -1054,7 +1067,7 @@ function renderDetail(g) {
   const a = g.alloc;
   let html = `<h2 class="d-name">${esc(g.name || '来宾')}</h2><div class="d-meta">${esc(g.email || '无邮箱')} · ${g.checkedInAt ? '已于 ' + fmtHM(g.checkedInAt) + ' 签到' + (g.source === 'manual' || (a && a.source === 'manual') ? '（手动）' : '（经 Luma）') : '已报名，尚未签到'}</div>`;
   if (a) {
-    if (!a.codes.length) html += `<div class="d-code"><div><div class="p">兑换码已发完</div>该来宾签到时，所有兑换码都已分配完。</div></div>`;
+    if (!a.codes.length) html += app.config.sendCodes ? `<div class="d-code"><div><div class="p">兑换码已发完</div>该来宾签到时，所有兑换码都已分配完。</div></div>` : `<div class="d-code"><div><div class="p">本场不发码</div>该来宾签到时，控制台的「发码」开关是关闭的。</div></div>`;
     for (const cd of a.codes) {
       html += `<div class="d-code"><img alt="qr" src="${qrDataUrl(cd.url)}"><div><div class="p">${esc(app.labels[cd.pool] || cd.pool)} · #${pad3(codeIndex(cd))}</div><div class="c">${esc(cd.code)}</div><div class="u">${esc(cd.url)}</div>
         <div class="row"><button class="primary" data-copy="${esc(cd.url)}">复制链接</button><button data-copy="${esc(cd.code)}">复制兑换码</button></div></div></div>`;
@@ -1062,7 +1075,7 @@ function renderDetail(g) {
     if (app.server) {
       const canSend = app.email && app.email.enabled && a.codes.length && a.email;
       html += `<div class="d-mail"><span class="p">邮件</span><span>${esc(mailLine(a))}</span>${canSend ? `<button data-mail="${esc(a.key)}">${a.mail && (a.mail.status === 'sent' || a.mail.status === 'dry') ? '重发' : '立即发送'}</button>` : ''}</div>`;
-      html += `<div class="row"><button class="danger" data-release="${esc(a.key)}">收回兑换码</button><span class="hint" style="margin:0;align-self:center">将兑换码退回池中；若来宾仍为已签到，几秒内会重新分配并再发邮件</span></div>`;
+      if (a.codes.length) html += `<div class="row"><button class="danger" data-release="${esc(a.key)}">收回兑换码</button><span class="hint" style="margin:0;align-self:center">将兑换码退回池中；若来宾仍为已签到，几秒内会重新分配并再发邮件</span></div>`;
     }
   } else {
     html += `<div class="row"><button class="primary" data-checkin="${esc(g.key)}">签到并分配兑换码</button></div><div class="hint">分配下一个未使用的兑换码，并在欢迎墙上播放欢迎动画。</div>`;
@@ -1123,6 +1136,24 @@ $('#dk-polling').onchange = async e => {
     toast(`无法切换轮询：${error.message}`);
   } finally {
     renderPollToggle();
+  }
+};
+
+$('#dk-codes').onchange = async e => {
+  const input = e.currentTarget, enabled = input.checked;
+  if (enabled && (app.poolTotals.A + app.poolTotals.B) === 0) { toast('码池是空的：先把兑换码放进 data/codes.json 再重启服务'); input.checked = false; return; }
+  if (enabled && !confirm('开启后，从现在起新签到的来宾会分到兑换码，并收到邮件（若已配置邮件）。确定开启？')) { input.checked = false; return; }
+  input.disabled = true;
+  try {
+    const r = await api('/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sendCodes: enabled }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.message || `config ${r.status}`);
+    Object.assign(app.config, j.config || { sendCodes: enabled });
+    toast(enabled ? '发码已开启（仅对之后签到的来宾生效）' : '已关闭发码');
+  } catch (error) {
+    toast(`无法切换发码：${error.message}`);
+  } finally {
+    renderPollToggle(); app.dirty = true;
   }
 };
 

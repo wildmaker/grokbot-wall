@@ -26,7 +26,7 @@ if (CODES_FILE.includes('example')) console.warn('  ! data/codes.json not found 
 const CODES = JSON.parse(fs.readFileSync(path.join(ROOT, CODES_FILE), 'utf8'));
 const STATE_FILE = path.join(ROOT, 'data/state.json');
 
-let state = { allocations: [], config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false } };
+let state = { allocations: [], config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false, sendCodes: false } };   // sendCodes: off unless the desk-console switch is flipped on
 try { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); state = { ...state, ...s, config: { ...state.config, ...(s.config || {}) } }; } catch {}
 // Polling always boots OFF (flip it on at the venue) unless LUMA_POLL_ON_START=1, so a state.json left over from an earlier event can never start polling by itself.
 state.config.pollEnabled = /^(1|true|yes|on)$/i.test(process.env.LUMA_POLL_ON_START || '');
@@ -263,7 +263,7 @@ function enqueueMail(a, { force = false } = {}) {
   const at = new Date().toISOString();
   if (!emailEnabled()) { a.mail = { status: 'skipped', reason: 'email not configured', at }; return; }
   if (!isEmail(a.email)) { a.mail = { status: 'skipped', reason: 'no email', at }; return; }
-  if (!a.codes.length) { a.mail = { status: 'skipped', reason: 'no codes', at }; return; }
+  if (!a.codes.length) { a.mail = { status: 'skipped', reason: state.config.sendCodes ? 'no codes' : 'codes off', at }; return; }
   if (!force && a.mail && (a.mail.status === 'sent' || a.mail.status === 'queued')) return;
   a.mail = { status: 'queued', at };
   mailQueue.push(a.key); pumpMail();
@@ -309,7 +309,8 @@ function allocate(body) {
   const used = new Set(state.allocations.flatMap(a => a.codes.map(c => c.code)));
   const pick = pool => { const i = (CODES[pool] || []).findIndex(c => !used.has(c.code)); return i >= 0 ? { pool, code: CODES[pool][i].code, url: CODES[pool][i].url, n: i + 1 } : null; };
   const codes = [];
-  if (state.config.poolMode === 'both') {
+  if (!state.config.sendCodes) { /* codes are off for this event: check-in only */ }
+  else if (state.config.poolMode === 'both') {
     for (const p of ['A', 'B']) { const c = pick(p); if (c) codes.push(c); }
   } else {
     for (const p of (state.config.poolMode === 'B-then-A' ? ['B', 'A'] : ['A', 'B'])) { const c = pick(p); if (c) { codes.push(c); break; } }
@@ -358,7 +359,12 @@ const server = http.createServer(async (req, res) => {
         else { state.config.eventId = null; Object.assign(event, { id: null, name: '', startAt: '', error: '' }); }
       }
       for (const k of ['poolMode', 'pollMs']) if (k in b) state.config[k] = b[k];
-      if ('pollEnabled' in b) state.config.pollEnabled = Boolean(b.pollEnabled);
+      if ('pollEnabled' in b) {
+        if (b.pollEnabled && !state.config.eventId && EVENT_REF) { try { await applyEvent(EVENT_REF); } catch {} }   // the startup lookup may not have succeeded yet: retry before refusing
+        if (b.pollEnabled && !state.config.eventId) return json(res, 400, { message: '还没有配置 Luma 活动：在 .env 填 LUMA_EVENT_URL，或在 desk → settings 粘贴活动链接' });
+        state.config.pollEnabled = Boolean(b.pollEnabled);
+      }
+      if ('sendCodes' in b) state.config.sendCodes = Boolean(b.sendCodes);
       save(); if (state.config.eventId !== prevEvent) { luma.event = null; luma.fullAt = 0; luma.guests.clear(); } if (KEY) schedulePoll(200); return json(res, 200, { config: state.config, eventName: displayName() });
     }
     if (url.pathname === '/poller/status' && req.method === 'POST') {
