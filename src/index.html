@@ -333,6 +333,7 @@ async function syncState() {
   try {
     const r = await api('/state'); if (!r.ok) throw new Error('state ' + r.status);
     const s = await r.json(); app.failedSyncs = 0;
+    if (s.warning) showErr(s.warning);
     app.poller = s.poller || null; app.pollerAt = Date.now(); app.event = s.event || null; app.regTotal = (s.event && s.event.guestCount) || 0;
     if (s.eventName) app.headline = s.eventName;
     app.labels = s.labels || app.labels; app.poolTotals = s.pools || app.poolTotals;
@@ -959,7 +960,7 @@ function pollStatus() {
     const who = p.eventName || p.eventId || '活动', last = p.latest && p.latest.username ? ` · 最近 ${publicName(p.latest.username)} ${fmtHM(p.latest.checkedInAt)}` : '';
     if (age > limit) options.push(bad('POLLER ✗ OFFLINE', '轮询 ✗ 离线', `${secs(age)} 秒无心跳：checkins:on 是否还在跑？`));
     else if (p.status === 'polling') options.push(st('ok', `LUMA ● LIVE ${secs(age)}s`, `Luma ● 正常 ${secs(age)}秒`, `${who} · 已签到 ${p.checkedInCount}${last} · ${secs(age)} 秒前轮询`));
-    else if (p.status === 'login_required') options.push(bad('LUMA ✗ LOGIN', 'Luma ✗ 需登录', 'Luma 登录已过期：运行 npm run checkins:login 后重启轮询'));
+    else if (p.status === 'login_required') options.push(bad('LUMA ✗ LOGIN', 'Luma ✗ 需登录', 'Luma 登录已过期：在弹出的 Chrome 窗口里重新登录，轮询会自动继续'));
     else if (p.status === 'error') options.push(bad('LUMA ✗ ' + (p.message || 'ERROR').slice(0, 40), 'Luma ✗ ' + (p.message || '错误').slice(0, 24), p.message || '轮询失败'));
     else if (p.status === 'stopped') options.push(bad('POLLER ✗ STOPPED', '轮询 ✗ 已停止', '签到轮询进程已退出'));
     else options.push(warn('POLLER ◌ STARTING', '轮询 ◌ 启动中', '签到轮询正在启动'));
@@ -1227,7 +1228,7 @@ $('#dk-reset').onclick = async () => {
   if (!confirm('重置签到名单？\n\n· 清空墙上的签到名单和兑换码分配（服务器会先备份一份）\n· 然后从 Luma 重新读取一次最新的已签到名单，不会触发欢迎动画')) return;
   btn.disabled = true;
   try {
-    if (app.persist) { await api('/reset', { method: 'POST' }); await api('/resync', { method: 'POST' }); }
+    if (app.persist) { await api('/reset', { method: 'POST' }); await api('/resync', { method: 'POST' }); showErr(''); }
     app.alloc.clear(); app.feed.length = 0; celeb.queue.length = 0; celeb.active = null; saveLocal(); app.dirty = true;
     if (app.mode === 'demo') { for (const g of app.guests.values()) g.checkedInAt = null; }
     if (app.mode === 'luma' && !app.persist) { app.initial = true; fullRefreshAt = 0; syncLuma(); }
