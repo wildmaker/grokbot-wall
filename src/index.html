@@ -376,6 +376,7 @@ function scheduleDemo() {
 const FONT = '"JetBrains Mono","SF Mono",Menlo,Consolas,"DejaVu Sans Mono","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",monospace';
 let GLYPHS = ' '; for (let i = 33; i < 127; i++) GLYPHS += String.fromCharCode(i);
 GLYPHS += '─│┌┐└┘├┤┬┴┼░▒▓█▀▄▌▐▏▕●○◆◇■□▲▼►◄★✓✗→←↑↓·•…×ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝßàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ';
+for (let m = 1; m < 64; m++) GLYPHS += String.fromCharCode(0xE000 + m);   // sextants: a cell cut into 2x3 pixels, bit b = pixel (b%2, b>>1); used to draw non-Latin names at 2.25x the resolution of half-blocks
 // The atlas is a growing list of slots: the base set above, then any other character (Chinese names, emoji…) the first time it is drawn.
 // A double-width character takes two slots (left half, right half) and two grid cells.
 const GL = [...GLYPHS], GI = new Map(); GL.forEach((ch, i) => GI.set(ch, i));
@@ -431,7 +432,15 @@ function buildAtlas(tw, th) {
       case '┬': line(ox, cy, ox + tw, cy); line(cx, cy, cx, oy + th); break;
       case '┴': line(ox, cy, ox + tw, cy); line(cx, oy, cx, cy); break;
       case '┼': line(ox, cy, ox + tw, cy); line(cx, oy, cx, oy + th); break;
-      default: x.fillText(ch, cx, cy + th * 0.03);
+      default: {
+        const cp = ch.charCodeAt(0);
+        if (cp >= 0xE001 && cp < 0xE040) {
+          for (let b = 0; b < 6; b++) if ((cp - 0xE000) >> b & 1) {
+            const c0 = b % 2, r0 = b >> 1, x0 = ox + Math.round(c0 * tw / 2), x1 = ox + Math.round((c0 + 1) * tw / 2), y0 = oy + Math.round(r0 * th / 3), y1 = oy + Math.round((r0 + 1) * th / 3);
+            x.fillRect(x0, y0, x1 - x0, y1 - y0);
+          }
+        } else x.fillText(ch, cx, cy + th * 0.03);
+      }
     }
   }
   return c;
@@ -606,24 +615,30 @@ function bigText(c, r, str, wide, color) {
   }
   return x - c;
 }
-// Names the 3x5 block font cannot draw (Chinese, accents beyond Latin…): rasterise them with a system font into half-block cells (8 rows = 16 px tall).
+// Names the 3x5 block font cannot draw (Chinese, accents beyond Latin…): rasterise them with a system font, 24 px tall, into sextant cells (8 rows x 3 pixels, 2 pixels per column).
 const rasterCache = new Map();
 function rasterName(name, avail) {
   const key = name + '|' + avail; if (rasterCache.has(key)) return rasterCache.get(key);
-  const H = 16, S = 4, SX = 0.85;   // SX narrows the bitmap: a cell is 0.6 as wide as a half-block row is tall
-  const font = `800 ${H * S}px -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif`;
+  const H = 24, S = 4, SX = 1.1;   // SX: a sextant pixel is 0.9x as wide as it is tall, so use 10% more of them across
+  const font = `700 ${H * S * 0.92}px -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Helvetica Neue", Arial, sans-serif`;
   let text = name.normalize('NFC').toUpperCase().replace(/\s+/g, ' ').trim();
   const big = document.createElement('canvas'), bx = big.getContext('2d'); bx.font = font;
-  const widthOf = t => Math.ceil(bx.measureText(t).width / S * SX) + 2;
-  while (text.length > 1 && widthOf(text) > avail) text = [...text].slice(0, -1).join('');
-  const W = Math.max(1, widthOf(text)); big.width = W * S / SX; big.height = H * S;
-  const g = big.getContext('2d'); g.font = font; g.fillStyle = '#fff'; g.textBaseline = 'middle'; g.fillText(text, S, H * S * 0.54);
+  const pxW = t => Math.ceil(bx.measureText(t).width / S * SX) + 4;
+  const colsOf = t => Math.ceil(pxW(t) / 2);
+  while (text.length > 1 && colsOf(text) > avail) text = [...text].slice(0, -1).join('');
+  const C = Math.max(1, colsOf(text)), W = C * 2; big.width = W * S; big.height = H * S;
+  const g = big.getContext('2d'); g.font = font; g.fillStyle = '#fff'; g.textBaseline = 'middle';
+  g.setTransform(SX, 0, 0, 1, 0, 0); g.fillText(text, 2 * S / SX, H * S * 0.54);
   const small = document.createElement('canvas'); small.width = W; small.height = H;
   const sx = small.getContext('2d', { willReadFrequently: true }); sx.imageSmoothingQuality = 'high'; sx.drawImage(big, 0, 0, W, H);
-  const px = sx.getImageData(0, 0, W, H).data, on = (x, y) => px[(y * W + x) * 4 + 3] > 90;
+  const px = sx.getImageData(0, 0, W, H).data, on = (x, y) => px[(y * W + x) * 4 + 3] > 105;
   const rows = [];
-  for (let r = 0; r < H / 2; r++) { let line = ''; for (let x = 0; x < W; x++) { const t = on(x, 2 * r), b = on(x, 2 * r + 1); line += t && b ? '█' : t ? '▀' : b ? '▄' : ' '; } rows.push(line); }
-  const out = { raster: true, rows, w: W }; rasterCache.set(key, out); return out;
+  for (let r = 0; r < H / 3; r++) {
+    let line = '';
+    for (let c = 0; c < C; c++) { let m = 0; for (let b = 0; b < 6; b++) if (on(c * 2 + (b % 2), r * 3 + (b >> 1))) m |= 1 << b; line += m ? String.fromCharCode(0xE000 + m) : ' '; }
+    rows.push(line);
+  }
+  const out = { raster: true, rows, w: C }; rasterCache.set(key, out); return out;
 }
 const needsRaster = name => /[^A-Za-z0-9 .'&\-!?/×·]/.test(name.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
 function fitName(name, avail) {
@@ -1015,7 +1030,7 @@ function drawBanner(t, L) {
     typed(cx, r + 1, l1, A.lightRgb, tt * 45, true, w - 6);
     const chars = Math.floor((tt - 0.3) * 10);
     if (chars > 0) {
-      if (f.raster) f.rows.forEach((row, i) => put(x0 + Math.floor((w - bw) / 2), r + 2 + i, row.slice(0, chars * 4), A.rgb));
+      if (f.raster) f.rows.forEach((row, i) => put(x0 + Math.floor((w - bw) / 2), r + 2 + i, row.slice(0, Math.ceil(row.length * clamp((tt - 0.3) / 0.9, 0, 1))), A.rgb));
       else bigText(x0 + Math.floor((w - bw) / 2), r + 2, f.text.slice(0, chars), f.wide, A.rgb);
     }
     if (app.config.sendCodes) typed(cx, r + (f.raster ? 10 : 8), l3, codes ? WHITE : [255, 120, 120], (tt - 1.1) * 60, true, w - 6);
@@ -1186,7 +1201,7 @@ function closeDesk() {
   desk.hidden = true;
   document.body.classList.remove('desk-open');
 }
-$('#desk-open').onclick = () => { openDesk(); settingsModal(); };
+$('#desk-open').onclick = openDesk;
 $('#dk-close').onclick = closeDesk;
 // Reveal the large SETTINGS entry only while the cursor is in the lower part of the page.
 addEventListener('pointermove', e => {
@@ -1311,16 +1326,21 @@ async function settingsModal() {
   if (app.luma) { try { const evs = await listEvents(); evOpts = evs.map(ev => `<option value="${esc(ev.id)}"${ev.id === app.eventId ? ' selected' : ''}>${esc(ev.name)} — ${new Date(ev.start_at).toLocaleString()}</option>`).join(''); } catch (e) { evOpts = `<option value="">无法列出活动：${esc(e.message)}</option>`; } }
   openModal(`<h3>设置</h3><div id="lc" class="lc"></div><form id="sf">
     ${app.luma ? `<div class="field"><label>Luma 活动</label><select name="eventId"><option value="">自动（最近一场）</option>${evOpts}</select></div>` : `<div class="field"><label>Luma</label><div class="dk-empty">官方 API 轮询未开启（无 LUMA_API_KEY）。签到来自浏览器会话轮询：npm run checkins:on。</div></div>`}
-    ${app.server ? `<div class="field"><label>Luma 活动链接或 ID${app.event && app.event.name ? ` · 当前：${esc(app.event.name)}` : ''}</label><input name="eventRef" placeholder="https://luma.com/your-event  （留空则保持 ${esc(app.config.eventId || '当前活动')}）" autocomplete="off" spellcheck="false"></div>` : ''}
+    ${app.server ? `<div class="field"><label>Luma 活动链接或 ID${app.event && app.event.name ? ` · 当前：${esc(app.event.name)}` : ''}</label><input name="eventRef" value="${esc(app.config.eventId || '')}" placeholder="https://luma.com/your-event" autocomplete="off" spellcheck="false"></div>` : ''}
+    <div class="field"><label>发放 Credits</label><label class="dk-poll" for="sf-send" style="align-self:flex-start"><input id="sf-send" name="sendCodes" type="checkbox" role="switch"${app.config.sendCodes ? ' checked' : ''}><span class="dk-poll-track" aria-hidden="true"></span><span id="sf-send-label">${app.config.sendCodes ? '发放中' : '不发放'}</span></label></div>
+    <div id="sf-credits"${app.config.sendCodes ? '' : ' hidden'}>
     <div class="field"><label>兑换码池</label><select name="poolMode"><option value="A-then-B"${app.config.poolMode === 'A-then-B' ? ' selected' : ''}>每位来宾一个码 · 先 A 池再 B 池</option><option value="B-then-A"${app.config.poolMode === 'B-then-A' ? ' selected' : ''}>每位来宾一个码 · 先 B 池再 A 池</option><option value="both"${app.config.poolMode === 'both' ? ' selected' : ''}>每位来宾两个码 · A、B 各一</option></select></div>
     <div class="field"><label>邮件发送</label><div class="dk-empty">${!app.server ? '需要 serve.mjs' : !app.email || !app.email.enabled ? '关闭 — 在 .env 设置 RESEND_API_KEY（和 EMAIL_FROM）后重启 serve.mjs' : `Resend · 发件人 ${esc(app.email.from)}${app.email.dryRun ? ' · 试跑（不会真发）' : ''}${app.email.testTo ? ` · 所有邮件改发到 ${esc(app.email.testTo)}` : ''}`}</div></div>
     ${app.server && app.email && app.email.enabled ? `<div class="field"><label>发一封测试邮件（假兑换码）到</label><div class="row" style="margin:0"><input id="sf-testto" type="email" placeholder="you@example.com" style="flex:1" autocomplete="off"><button type="button" id="sf-test">发送测试</button></div></div>` : ''}
+    <div class="hint">码池：A = ${esc(app.labels.A)}（${app.poolTotals.A}）· B = ${esc(app.labels.B)}（${app.poolTotals.B}）</div>
+    </div>
     <div class="field"><label>轮询间隔（秒）</label><input name="poll" type="number" min="2" max="60" value="${Math.round(app.config.pollMs / 1000)}"></div>
     <div class="field"><label>单元格高度 px（字号，会刷新页面）</label><input name="cell" type="number" min="12" max="40" value="${G.ch}"></div>
     <div class="row"><button class="primary" type="submit">保存</button><button type="button" id="sf-cancel">取消</button><span class="dk-spacer"></span><button type="button" class="danger" id="sf-reset">清空分配记录</button></div>
-    <div class="hint">码池：A = ${esc(app.labels.A)}（${app.poolTotals.A}）· B = ${esc(app.labels.B)}（${app.poolTotals.B}）。状态${app.persist ? '保存在服务器 data/state.json' : app.mode === 'demo' ? '不保存（演示）' : '仅保存在本浏览器'}。</div></form>`);
+    <div class="hint">状态${app.persist ? '保存在服务器 data/state.json' : app.mode === 'demo' ? '不保存（演示）' : '仅保存在本浏览器'}。</div></form>`);
   renderLumaCard();
   $('#sf-cancel').onclick = closeModal;
+  $('#sf-send').onchange = e => { $('#sf-credits').hidden = !e.target.checked; $('#sf-send-label').textContent = e.target.checked ? '发放中' : '不发放'; };
   const tb = $('#sf-test');
   if (tb) tb.onclick = async () => {
     const to = $('#sf-testto').value.trim(); if (!to) { toast('请填写邮箱'); return; }
@@ -1339,18 +1359,20 @@ async function settingsModal() {
   };
   $('#sf').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target);
-    const patch = { poolMode: String(fd.get('poolMode')), pollMs: clamp(Number(fd.get('poll')) || 5, 2, 60) * 1000 };
+    const patch = { pollMs: clamp(Number(fd.get('poll')) || 5, 2, 60) * 1000, sendCodes: fd.has('sendCodes') };
+    if (patch.sendCodes) patch.poolMode = String(fd.get('poolMode'));
     const eventRef = String(fd.get('eventRef') || '').trim();
-    if (eventRef) {   // a pasted link wins over the dropdown; the server resolves it to an evt- id and name
+    let eventChanged = false;
+    if (eventRef && eventRef !== app.config.eventId) {   // the field is pre-filled with the current event, so only re-resolve when it was edited; the server resolves a pasted link to an evt- id and name
       const r = await api('/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: eventRef }) }).catch(() => null);
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r || !r.ok) { toast(j.message || '无法连接服务器'); return; }
-      patch.eventId = j.config.eventId; app.eventId = null;
-    } else if (app.luma) patch.eventId = String(fd.get('eventId') || '') || null;
+      patch.eventId = j.config.eventId; app.eventId = null; eventChanged = true;
+    } else if (app.luma) { patch.eventId = String(fd.get('eventId') || '') || null; eventChanged = patch.eventId !== app.eventId; }
     await pushConfig(patch);
     const cell = Number(fd.get('cell'));
     if (cell && cell !== G.ch) { const u = new URL(location.href); u.searchParams.set('cell', cell); location.href = u.toString(); return; }
-    if ((app.luma || eventRef) && patch.eventId !== app.eventId) { location.reload(); return; }
+    if (eventChanged) { location.reload(); return; }
     closeModal(); toast('已保存');
   };
 }
