@@ -37,6 +37,19 @@
   .dk-stat.ok{color:#fff;border-color:var(--accent)} .dk-stat.ok i{background:var(--accent);box-shadow:0 0 6px var(--accent)}
   .dk-stat.warn{color:#ffd166;border-color:#7a5c14} .dk-stat.warn i{background:#ffd166}
   .dk-stat.bad{color:#ff7b7b;border-color:#ff4d4d} .dk-stat.bad i{background:#ff4d4d}
+  /* Luma connection card in the settings modal */
+  .lc{--c:#6b7280;border:2px solid var(--c);margin:0 0 18px;background:#090b10}
+  .lc.ok{--c:#3ddc84} .lc.warn{--c:#ffd166} .lc.bad{--c:#ff4d4d}
+  .lc-top{display:flex;align-items:center;gap:14px;padding:14px 16px;background:color-mix(in srgb,var(--c) 14%,transparent)}
+  .lc-dot{width:18px;height:18px;border-radius:50%;background:var(--c);flex:none}
+  .lc.ok .lc-dot{box-shadow:0 0 12px var(--c);animation:lcpulse 1.6s ease-in-out infinite} .lc.bad .lc-dot{animation:lcpulse .8s ease-in-out infinite}
+  @keyframes lcpulse{50%{opacity:.35}}
+  .lc-head{font-size:19px;font-weight:700;line-height:1.25;color:var(--c);letter-spacing:.02em}
+  .lc-act{color:#c9ccd4;font-size:12px;margin-top:3px;line-height:1.5}
+  .lc-rows{padding:8px 16px 10px;border-top:1px solid var(--line)}
+  .lc-row{display:grid;grid-template-columns:20px 74px 1fr;gap:8px;padding:4px 0;font-size:12px;line-height:1.5;align-items:baseline}
+  .lc-row .m{font-weight:700;text-align:center} .lc-row .n{color:var(--dim)} .lc-row .d{color:#c9ccd4;word-break:break-word}
+  .lc-row.ok .m{color:#3ddc84} .lc-row.warn .m{color:#ffd166} .lc-row.bad .m{color:#ff4d4d} .lc-row.bad .d{color:#ff9b9b} .lc-row.off .m{color:#6b7280}
   .dk-body{display:flex;flex:1;min-height:0}
   .dk-left{width:46%;display:flex;flex-direction:column;border-right:1px solid var(--line)}
   .dk-left input{margin:12px 14px;flex:none}
@@ -1243,10 +1256,58 @@ function manualModal() {
     closeModal(); await ensureAllocated({ ...g, source: 'manual' }, { celebrate: true }); selectedKey = key; app.dirty = true; renderDesk(); toast(`已签到 ${name}`);
   };
 }
+// Settings-modal card: one big verdict (green / amber / red / grey) plus the whole chain, link by link, so a failure points at its own link.
+function lumaCard() {
+  const now = Date.now(), secs = ms => Math.max(0, Math.round(ms / 1000)), rows = [];
+  const row = (lv, name, detail) => rows.push({ lv, name, detail });
+  if (app.mode === 'demo') return { lv: 'warn', head: '演示模式 · 没有连接 Luma', act: '页面显示的是假数据。要接真实签到：配置 LUMA_EVENT_URL 并重启服务。', rows };
+  const p = app.poller, on = Boolean(app.config.pollEnabled), evId = app.config.eventId, evName = (app.event && app.event.name) || app.headline || '';
+  const pAge = p ? p.ageMs + (now - app.pollerAt) : 0, pLimit = p ? (p.status === 'error' ? 35_000 : Math.max(10_000, 4 * (p.pollMs || 2000))) : 0;
+  const wallBad = app.persist && app.failedSyncs >= 3;
+  row(!app.persist ? 'warn' : wallBad ? 'bad' : 'ok', '欢迎墙服务', !app.persist ? '没有连接服务（仅本机，不保存）' : wallBad ? '页面连不上欢迎墙服务，正在重连' : '页面与服务连接正常');
+  row(evId ? 'ok' : 'bad', '签到活动', evId ? `${evName || '已配置'}  ·  ${evId}` : '还没有配置：在下方粘贴活动链接，或在 .env 设置 LUMA_EVENT_URL');
+  row(on ? 'ok' : 'off', '轮询开关', on ? `已开启 · 每 ${Math.round((p && p.pollMs ? p.pollMs : app.config.pollMs || 5000) / 1000)} 秒读取一次` : '已关闭 · 开门时在控制台顶部打开「轮询」');
+  let reader = null;   // the link that reads Luma
+  if (!on) row('off', '轮询程序', '开关关闭，未检测');
+  else if (p) {
+    reader = pAge > pLimit ? 'dead' : p.status;
+    row(pAge > pLimit ? 'bad' : p.status === 'stopped' ? 'bad' : p.status === 'starting' ? 'warn' : 'ok', '轮询程序',
+      pAge > pLimit ? `${secs(pAge)} 秒没有心跳 · 检查 npm run checkins:on 是否还在运行` : p.status === 'stopped' ? '已退出 · 重新运行 npm run checkins:on' : p.status === 'starting' ? '正在启动 / 打开 Chrome…' : `在线 · ${secs(pAge)} 秒前上报`);
+  } else if (app.serverPolls) row('ok', '轮询程序', '由服务器直接调用 Luma 官方 API');
+  else row('bad', '轮询程序', '没有收到心跳 · 请运行 npm run checkins:on');
+  if (on && p && reader !== 'dead' && reader !== 'stopped') {
+    if (p.status === 'polling') row('ok', 'Luma 读取', `正常 · 签到名单读取成功`);
+    else if (p.status === 'login_required') row('bad', 'Luma 登录', '登录已过期 · 在弹出的 Chrome 里重新登录，或运行 npm run checkins:login');
+    else if (p.status === 'error') row('bad', 'Luma 读取', (p.message || '读取失败') + ' · 程序会自动重试');
+    else if (p.status === 'paused') row('warn', 'Luma 读取', '等待轮询程序响应开关…');
+    else row('warn', 'Luma 读取', '等待第一次读取…');
+  } else if (on && !p && app.serverPolls) {
+    if (app.error) row('bad', 'Luma 读取', app.error);
+    else row(app.lastSync && now - app.lastSync < Math.max(15_000, 4 * (app.config.pollMs || 5000)) ? 'ok' : 'bad', 'Luma 读取', app.lastSync ? `${secs(now - app.lastSync)} 秒前读取` : '还没有读取成功');
+  } else row('off', 'Luma 读取', '—');
+  const latest = p && p.latest && p.latest.username ? `${p.latest.username}  ·  ${fmtHM(p.latest.checkedInAt)}` : '';
+  row(latest ? 'ok' : 'off', '最近签到', latest || '暂无');
+  const st = pollStatus(), bad = rows.find(r => r.lv === 'bad');
+  let lv = st.level === 'ok' ? 'ok' : st.level === 'off' ? 'off' : st.level === 'bad' ? 'bad' : 'warn';
+  if (!evId) lv = 'bad';
+  if (wallBad) lv = 'bad';
+  const b = bad || rows.find(r => r.lv === 'warn');
+  if (lv === 'ok') return { lv, head: 'Luma 已连通 · 签到可以上墙', act: `${evName || evId} · ${secs(pAge || now - app.lastSync)} 秒前刚读取过 · 墙上已有 ${app.feed.length} 人签到`, rows };
+  if (lv === 'off') return { lv, head: '轮询已关闭 · 现在不会读取签到', act: '开门时点控制台顶部的「轮询」开关，下面的状态会逐项变绿。', rows };
+  return { lv, head: lv === 'bad' ? `异常 · ${b ? b.name : 'Luma'}` : `请稍候 · ${b ? b.name : 'Luma'}`, act: b ? b.detail : st.detail || '', rows };
+}
+function renderLumaCard() {
+  const el = $('#lc'); if (!el) return;
+  const c = lumaCard(), mark = { ok: '✓', bad: '✗', warn: '…', off: '○' };
+  el.className = 'lc ' + c.lv;
+  el.innerHTML = `<div class="lc-top"><span class="lc-dot"></span><div><div class="lc-head">${esc(c.head)}</div><div class="lc-act">${esc(c.act)}</div></div></div>
+    <div class="lc-rows">${c.rows.map(r => `<div class="lc-row ${r.lv}"><span class="m">${mark[r.lv]}</span><span class="n">${esc(r.name)}</span><span class="d">${esc(r.detail)}</span></div>`).join('')}</div>`;
+}
+setInterval(() => { if (!modal.hidden) renderLumaCard(); }, 1000);
 async function settingsModal() {
   let evOpts = '';
   if (app.luma) { try { const evs = await listEvents(); evOpts = evs.map(ev => `<option value="${esc(ev.id)}"${ev.id === app.eventId ? ' selected' : ''}>${esc(ev.name)} — ${new Date(ev.start_at).toLocaleString()}</option>`).join(''); } catch (e) { evOpts = `<option value="">无法列出活动：${esc(e.message)}</option>`; } }
-  openModal(`<h3>设置</h3><form id="sf">
+  openModal(`<h3>设置</h3><div id="lc" class="lc"></div><form id="sf">
     ${app.luma ? `<div class="field"><label>Luma 活动</label><select name="eventId"><option value="">自动（最近一场）</option>${evOpts}</select></div>` : `<div class="field"><label>Luma</label><div class="dk-empty">官方 API 轮询未开启（无 LUMA_API_KEY）。签到来自浏览器会话轮询：npm run checkins:on。</div></div>`}
     ${app.server ? `<div class="field"><label>Luma 活动链接或 ID${app.event && app.event.name ? ` · 当前：${esc(app.event.name)}` : ''}</label><input name="eventRef" placeholder="https://luma.com/your-event  （留空则保持 ${esc(app.config.eventId || '当前活动')}）" autocomplete="off" spellcheck="false"></div>` : ''}
     <div class="field"><label>兑换码池</label><select name="poolMode"><option value="A-then-B"${app.config.poolMode === 'A-then-B' ? ' selected' : ''}>每位来宾一个码 · 先 A 池再 B 池</option><option value="B-then-A"${app.config.poolMode === 'B-then-A' ? ' selected' : ''}>每位来宾一个码 · 先 B 池再 A 池</option><option value="both"${app.config.poolMode === 'both' ? ' selected' : ''}>每位来宾两个码 · A、B 各一</option></select></div>
@@ -1256,6 +1317,7 @@ async function settingsModal() {
     <div class="field"><label>单元格高度 px（字号，会刷新页面）</label><input name="cell" type="number" min="12" max="40" value="${G.ch}"></div>
     <div class="row"><button class="primary" type="submit">保存</button><button type="button" id="sf-cancel">取消</button><span class="dk-spacer"></span><button type="button" class="danger" id="sf-reset">清空分配记录</button></div>
     <div class="hint">码池：A = ${esc(app.labels.A)}（${app.poolTotals.A}）· B = ${esc(app.labels.B)}（${app.poolTotals.B}）。状态${app.persist ? '保存在服务器 data/state.json' : app.mode === 'demo' ? '不保存（演示）' : '仅保存在本浏览器'}。</div></form>`);
+  renderLumaCard();
   $('#sf-cancel').onclick = closeModal;
   const tb = $('#sf-test');
   if (tb) tb.onclick = async () => {

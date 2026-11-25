@@ -510,10 +510,22 @@ async function main() {
     emit({ type: 'event_changed', eventId, eventName });
   };
 
+  // Someone closed the Chrome tab or window mid-event: open it again instead of failing every poll.
+  const browserGone = error =>
+    !page || page.isClosed() || /has been closed|Target closed|browser has disconnected|Chrome was closed/i.test(error.message || '');
+  const reopenBrowser = async () => {
+    emit({ type: 'browser_reopening', eventId, message: 'Chrome was closed; reopening it.' });
+    await report('starting', { message: 'Chrome was closed; reopening it.' });
+    await context?.close().catch(() => {});
+    context = await launchBrowser(profileDir, headless);
+    page = context.pages()[0] || (await context.newPage());
+    await page.goto(checkInUrl(eventId), { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    prefetchedGuests = await waitForLogin();
+  };
+
   try {
     await report('starting');
     context = await launchBrowser(profileDir, headless);
-    context.once('close', stop);
     page = context.pages()[0] || (await context.newPage());
     await page.goto(checkInUrl(eventId), { waitUntil: 'domcontentloaded', timeout: 30_000 });
     prefetchedGuests = await waitForLogin();
@@ -564,10 +576,20 @@ async function main() {
         } else {
           await report('polling');
         }
-      } catch (error) {
+      } catch (caught) {
+        let error = caught;
         if (error instanceof AuthenticationRequiredError) {
           prefetchedGuests = await waitForLogin();
           continue;
+        }
+        if (!once && !stopped && browserGone(error)) {
+          try {
+            await reopenBrowser();
+            consecutiveErrors = 0;
+            continue;
+          } catch (reopenError) {
+            error = reopenError;
+          }
         }
         consecutiveErrors += 1;
         emit(
