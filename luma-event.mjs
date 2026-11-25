@@ -34,7 +34,8 @@ async function getJson(url, ms = 10_000) {
 
 const pickEvent = body => {
   const ev = body?.event || body?.data?.event || body?.data || body || {};
-  return { id: ev.api_id || body?.api_id || body?.data?.api_id || null, name: ev.name || '', startAt: ev.start_at || '' };
+  const guestCount = Number(body?.guest_count ?? body?.data?.guest_count ?? ev.guest_count) || 0;   // registered guests, public
+  return { id: ev.api_id || body?.api_id || body?.data?.api_id || null, name: ev.name || '', startAt: ev.start_at || '', guestCount };
 };
 
 // -> { id, name, startAt }. Throws a readable error when the link cannot be resolved.
@@ -43,7 +44,7 @@ export async function resolveEvent(input) {
   if (!ref) throw new Error(`Not a Luma event link or id: "${input}"`);
   if (ref.kind === 'id') {
     const found = pickEvent(await getJson(`${API}/event/get?event_api_id=${encodeURIComponent(ref.id)}`).catch(() => ({})));
-    return { id: ref.id, name: found.name, startAt: found.startAt };
+    return { id: ref.id, name: found.name, startAt: found.startAt, guestCount: found.guestCount };
   }
   const body = await getJson(`${API}/url?url=${encodeURIComponent(ref.slug)}`);
   if (body.kind && body.kind !== 'event') throw new Error(`"${ref.slug}" is a Luma ${body.kind} page, not an event`);

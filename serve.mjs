@@ -41,7 +41,7 @@ const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
 const EVENT_NAME = process.env.EVENT_NAME || '';
 // ---- which Luma event this deployment serves: LUMA_EVENT_URL (a luma.com link) or LUMA_EVENT_ID, resolved through Luma's public page API ----
 const EVENT_REF = process.env.LUMA_EVENT_URL || process.env.LUMA_EVENT_ID || '';
-const event = { id: null, name: '', startAt: '', error: '' };
+const event = { id: null, name: '', startAt: '', guestCount: 0, error: '' };
 const displayName = () => EVENT_NAME || event.name || '';          // wall headline: EVENT_NAME wins, else the event's own Luma title
 const eventLabel = () => process.env.EMAIL_EVENT_NAME || displayName() || 'Grok Bot Meetup';
 const emailSubject = () => process.env.EMAIL_SUBJECT || `Your Cursor credits from ${displayName() || 'Grok Bot Meetup'}`;
@@ -54,6 +54,8 @@ async function applyEvent(ref) {
     return ev;
   } catch (e) { event.error = e.message; throw e; }
 }
+// Registered-guest count for the progress bar (public page API, no login). Refreshed every minute; a failed refresh keeps the last value.
+setInterval(() => { if (event.id) lookupEvent(event.id).then(ev => { if (ev.guestCount) event.guestCount = ev.guestCount; }).catch(() => {}); }, 60_000);
 const EMAIL_DRY_RUN = /^(1|true|yes)$/i.test(process.env.EMAIL_DRY_RUN || '');
 const EMAIL_TEST_TO = process.env.EMAIL_TEST_TO || '';           // if set, every guest email is redirected here
 const EMAIL_OFF = /^(1|true|yes)$/i.test(process.env.EMAIL_OFF || '');

@@ -181,6 +181,7 @@ const app = {
   server: false, luma: false,
   eventId: null, eventName: '', eventStart: null,
   total: 0,                // approved guests
+  regTotal: 0,             // registered guests of the Luma event (public count; 0 = unknown)
   guests: new Map(),       // key -> {key,id,name,email,checkedInAt,approval}
   alloc: new Map(),        // key -> allocation
   feed: [],                // allocations newest first
@@ -311,7 +312,7 @@ async function syncState() {
   try {
     const r = await api('/state'); if (!r.ok) throw new Error('state ' + r.status);
     const s = await r.json(); app.failedSyncs = 0;
-    app.poller = s.poller || null; app.pollerAt = Date.now(); app.event = s.event || null;
+    app.poller = s.poller || null; app.pollerAt = Date.now(); app.event = s.event || null; app.regTotal = (s.event && s.event.guestCount) || 0;
     if (s.eventName) app.headline = s.eventName;
     app.labels = s.labels || app.labels; app.poolTotals = s.pools || app.poolTotals;
     if (app.serverPolls && s.luma) {
@@ -885,11 +886,13 @@ function drawUI(t, L) {
   drawBanner(t, L);
 }
 
+// total guests the bar is measured against: the Luma registration count (or the API poller's own count); 0 = unknown
+const totalGuests = () => { const t = Math.max(app.regTotal || 0, app.total || 0); return t ? Math.max(t, app.feed.length) : 0; };
 function drawFeed(t, L) {
   const A = accent(); const n = Math.min(L.feedMax, app.feed.length);
   const h = n ? n + 2 + (app.feed.length > n ? 1 : 0) : 3;
   fillRect(L.feedC - 1, L.feedR, L.FW + 2, h + 1, ' ', BLACK, 64);
-  const cnt = `${pad3(app.feed.length)}/${pad3(Math.max(app.total, app.feed.length))}`;
+  const tg = totalGuests(), cnt = tg ? `${pad3(app.feed.length)}/${pad3(tg)}` : pad3(app.feed.length);
   put(L.feedC + 1, L.feedR, 'CHECK-INS', WHITE); put(L.feedC + L.FW - 1 - cnt.length, L.feedR, cnt, A.rgb);
   put(L.feedC + 1, L.feedR + 1, '─'.repeat(L.FW - 2), DIM);
   if (!n) put(L.feedC + 1, L.feedR + 2, '> waiting for the first guest' + (Math.floor(t * 2) % 2 ? ' ▌' : ''), GREY);
@@ -910,13 +913,13 @@ function drawFeed(t, L) {
 function drawBottom(t, L) {
   const { cols } = G; const A = accent(); const br = L.bottomR;
   fillRect(0, br, cols, 1, ' ', BLACK, 64);
-  const total = Math.max(app.total, app.feed.length, 1), pct = clamp(app.feed.length / total, 0, 1);
+  const tg = totalGuests(), pct = tg ? clamp(app.feed.length / tg, 0, 1) : 0;   // unknown total: no percentage rather than a false 100%
   const barW = clamp(Math.floor(cols * 0.14), 10, 30), filled = Math.round(pct * barW);
   let x = 1;
   put(x, br, 'CHECKED IN', GREY); x += 11;
-  put(x, br, `${pad3(app.feed.length)}/${pad3(Math.max(app.total, app.feed.length))}`, WHITE); x += 9;
+  put(x, br, tg ? `${pad3(app.feed.length)}/${pad3(tg)}` : pad3(app.feed.length), WHITE); x += 9;
   put(x, br, '█'.repeat(filled) + '░'.repeat(barW - filled), A.rgb); x += barW + 1;
-  put(x, br, `${Math.round(pct * 100)}%`, GREY);
+  put(x, br, tg ? `${Math.round(pct * 100)}%` : '--', GREY);
   // right-aligned status segments
   const seg = [];
   const st = pollStatus(); seg.push([st.text, st.level === 'ok' ? A.rgb : st.level === 'bad' ? [255, 90, 90] : st.level === 'off' ? GREY : [255, 200, 80]]);
