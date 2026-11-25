@@ -90,6 +90,7 @@
   #desk-open{position:fixed;left:50%;bottom:42px;z-index:8;transform:translate(-50%,18px);opacity:0;pointer-events:none;display:inline-flex;flex-direction:column;align-items:center;gap:10px;padding:18px 40px 16px;background:linear-gradient(180deg,rgba(6,7,10,.55),rgba(6,7,10,.92));border:1px solid var(--accent);color:var(--accent);font:700 clamp(32px,5vw,60px)/1.1 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",var(--mono);letter-spacing:.12em;cursor:pointer;box-shadow:0 16px 48px rgba(0,0,0,.55);transition:opacity .18s ease,transform .18s ease,color .12s ease,border-color .12s ease}
   #desk-open .desk-open-sub{font:500 13px/1.4 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",var(--mono);letter-spacing:.08em;color:var(--dim)}
   #desk-open .desk-open-sub kbd{border-color:#555;color:var(--fg);font-size:10px;padding:1px 5px;letter-spacing:.04em;margin:0 2px;font-family:var(--mono)}
+  body.celebrating #desk-open{opacity:0!important;pointer-events:none!important}   /* never cover the welcome banner */
   body.desk-reveal:not(.desk-open) #desk-open{opacity:1;transform:translate(-50%,0);pointer-events:auto}
   #desk-open:hover,#desk-open:focus-visible{color:#fff;border-color:#fff}
   #desk-open:focus-visible{outline:2px solid #fff;outline-offset:3px}
@@ -1002,7 +1003,7 @@ function drawBanner(t, L) {
   if (celeb.active) {
     const e = celeb.active, tt = t - celeb.t0;
     const shownName = publicName(e.name || (e.email ? e.email.split('@')[0] : 'Guest'));
-    const f = needsRaster(shownName) ? rasterName(shownName, cols - 12) : fitName(shownName, cols - 8);
+    let f; try { f = needsRaster(shownName) ? rasterName(shownName, cols - 12) : fitName(shownName, cols - 8); } catch { f = fitName(shownName, cols - 8); }
     const bw = f.raster ? f.w : bigWidth(f.text, f.wide);
     const codes = e.codes && e.codes.length;
     const mailed = app.email && app.email.enabled && e.email && !(e.mail && (e.mail.status === 'failed' || e.mail.status === 'skipped'));
@@ -1060,8 +1061,9 @@ function frame() {
   const t = nowS(); const dt = Math.min(0.05, t - last); last = t;
   const L = layout();
   updateCelebration(t, L);
+  document.body.classList.toggle('celebrating', Boolean(celeb.active));
   updateWorld(t, dt, L);
-  drawUI(t, L);
+  try { drawUI(t, L); } catch (e) { if (!window.__uiErr) { window.__uiErr = 1; console.error('drawUI failed (the 3D scene keeps running):', e); } }   // a bad name must never freeze the whole wall
   if (atlasDirty) makeAtlas();
   glyphTex.needsUpdate = true; colorTex.needsUpdate = true;
   if (RAW) { renderer.setRenderTarget(null); renderer.render(bgScene, cam); renderer.autoClear = false; renderer.render(scene, cam); renderer.autoClear = true; }
