@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { resolveEvent as lookupEvent } from './luma-event.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,8 +26,10 @@ if (CODES_FILE.includes('example')) console.warn('  ! data/codes.json not found 
 const CODES = JSON.parse(fs.readFileSync(path.join(ROOT, CODES_FILE), 'utf8'));
 const STATE_FILE = path.join(ROOT, 'data/state.json');
 
-let state = { allocations: [], config: { eventId: process.env.LUMA_EVENT_ID || null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false } };
+let state = { allocations: [], config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false } };
 try { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); state = { ...state, ...s, config: { ...state.config, ...(s.config || {}) } }; } catch {}
+// Polling always boots OFF (flip it on at the venue) unless LUMA_POLL_ON_START=1, so a state.json left over from an earlier event can never start polling by itself.
+state.config.pollEnabled = /^(1|true|yes|on)$/i.test(process.env.LUMA_POLL_ON_START || '');
 const save = () => fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 // backfill code indexes on allocations made before `n` existed
 for (const a of state.allocations) for (const c of a.codes || []) if (!c.n) { const i = (CODES[c.pool] || []).findIndex(x => x.code === c.code); if (i >= 0) c.n = i + 1; }
@@ -35,9 +38,22 @@ for (const a of state.allocations) for (const c of a.codes || []) if (!c.n) { co
 const RESEND_KEY = process.env.RESEND_API_KEY || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Grok Bot <onboarding@resend.dev>';
 const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
-const EMAIL_SUBJECT = process.env.EMAIL_SUBJECT || `Your Cursor credits from ${process.env.EVENT_NAME || 'Grok Bot Meetup'}`;
 const EVENT_NAME = process.env.EVENT_NAME || '';
-const EMAIL_EVENT = process.env.EMAIL_EVENT_NAME || EVENT_NAME || 'Grok Bot Meetup';
+// ---- which Luma event this deployment serves: LUMA_EVENT_URL (a luma.com link) or LUMA_EVENT_ID, resolved through Luma's public page API ----
+const EVENT_REF = process.env.LUMA_EVENT_URL || process.env.LUMA_EVENT_ID || '';
+const event = { id: null, name: '', startAt: '', error: '' };
+const displayName = () => EVENT_NAME || event.name || '';          // wall headline: EVENT_NAME wins, else the event's own Luma title
+const eventLabel = () => process.env.EMAIL_EVENT_NAME || displayName() || 'Grok Bot Meetup';
+const emailSubject = () => process.env.EMAIL_SUBJECT || `Your Cursor credits from ${displayName() || 'Grok Bot Meetup'}`;
+async function applyEvent(ref) {
+  try {
+    const ev = await lookupEvent(ref);
+    Object.assign(event, ev, { error: '' });
+    if (state.config.eventId !== ev.id) { state.config.eventId = ev.id; save(); }
+    console.log(`  ◎ event ${ev.id}${ev.name ? ` "${ev.name}"` : ''}`);
+    return ev;
+  } catch (e) { event.error = e.message; throw e; }
+}
 const EMAIL_DRY_RUN = /^(1|true|yes)$/i.test(process.env.EMAIL_DRY_RUN || '');
 const EMAIL_TEST_TO = process.env.EMAIL_TEST_TO || '';           // if set, every guest email is redirected here
 const EMAIL_OFF = /^(1|true|yes)$/i.test(process.env.EMAIL_OFF || '');
@@ -50,6 +66,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function fetchJsonWithTimeout(url, init, ms = 20000) { const ac = new AbortController(); const t = setTimeout(() => ac.abort(), ms); try { const r = await fetch(url, { ...init, signal: ac.signal }); const body = await r.json().catch(() => ({})); return { status: r.status, ok: r.ok, body }; } finally { clearTimeout(t); } }
 
 function renderEmail(a) {
+  const EMAIL_EVENT = eventLabel(), EMAIL_SUBJECT = emailSubject();
   const first = String(a.name || '').trim().split(/\s+/)[0] || 'there';
   const many = a.codes.length > 1;
   const hero = PUBLIC_URL ? `${PUBLIC_URL}/assets/hero-blue.jpg` : '';   // needs a public URL for mail clients to fetch it
@@ -310,7 +327,10 @@ function allocate(body) {
 
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(obj)); };
 const readBody = req => new Promise(r => { let b = ''; req.on('data', d => b += d); req.on('end', () => { try { r(b ? JSON.parse(b) : {}); } catch { r({}); } }); });
-const publicState = () => ({ allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
+// Heartbeat from luma-checkin-poller.mjs (the browser-session helper); the wall turns it into the status light.
+let poller = null;
+const pollerView = () => poller && { ...poller, ageMs: Date.now() - poller.receivedAt };
+const publicState = () => ({ allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, eventName: displayName(), event: { ...event }, poller: pollerView(), luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -327,15 +347,26 @@ const server = http.createServer(async (req, res) => {
       return json(res, 401, { message: 'missing or wrong key' });
     }
     if (url.pathname === '/guests') return json(res, 200, { guests: [...luma.guests.values()] });
-    if (url.pathname === '/health') return json(res, 200, { ok: true, luma: Boolean(KEY), serverPolls: Boolean(KEY), auth: Boolean(WALL_TOKEN), eventName: EVENT_NAME, eventId: state.config.eventId, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, email: emailInfo() });
+    if (url.pathname === '/health') return json(res, 200, { ok: true, luma: Boolean(KEY), serverPolls: Boolean(KEY), auth: Boolean(WALL_TOKEN), eventName: displayName(), eventId: state.config.eventId, eventConfigured: Boolean(EVENT_REF || state.config.eventId), config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, email: emailInfo() });
     if (url.pathname === '/state' && req.method === 'GET') return json(res, 200, publicState());
     if (url.pathname === '/allocate' && req.method === 'POST') return json(res, 200, { allocation: allocate(await readBody(req)) });
     if (url.pathname === '/config' && req.method === 'POST') {
       const b = await readBody(req);
       const prevEvent = state.config.eventId;
-      for (const k of ['eventId', 'poolMode', 'pollMs']) if (k in b) state.config[k] = b[k];
+      if ('eventId' in b) {   // accepts an evt-… id, a luma.com link or a slug; empty = auto (nearest upcoming)
+        if (String(b.eventId || '').trim()) { try { await applyEvent(String(b.eventId)); } catch (e) { return json(res, 400, { message: `could not resolve that Luma event: ${e.message}` }); } }
+        else { state.config.eventId = null; Object.assign(event, { id: null, name: '', startAt: '', error: '' }); }
+      }
+      for (const k of ['poolMode', 'pollMs']) if (k in b) state.config[k] = b[k];
       if ('pollEnabled' in b) state.config.pollEnabled = Boolean(b.pollEnabled);
-      save(); if (state.config.eventId !== prevEvent) { luma.event = null; luma.fullAt = 0; luma.guests.clear(); } if (KEY) schedulePoll(200); return json(res, 200, { config: state.config });
+      save(); if (state.config.eventId !== prevEvent) { luma.event = null; luma.fullAt = 0; luma.guests.clear(); } if (KEY) schedulePoll(200); return json(res, 200, { config: state.config, eventName: displayName() });
+    }
+    if (url.pathname === '/poller/status' && req.method === 'POST') {
+      const b = await readBody(req), str = (v, n) => String(v ?? '').slice(0, n);
+      poller = { status: str(b.status, 24), message: str(b.message, 200), eventId: str(b.eventId, 64), eventName: str(b.eventName, 120), pollMs: Number(b.pollMs) || 0,
+        checkedInCount: Number(b.checkedInCount) || 0, latest: b.latest && typeof b.latest === 'object' ? { username: str(b.latest.username, 120), checkedInAt: str(b.latest.checkedInAt, 40) } : null,
+        lastOkAt: Number(b.lastOkAt) ? Math.min(Number(b.lastOkAt), Date.now()) : (poller && poller.lastOkAt) || 0, receivedAt: Date.now() };
+      return json(res, 200, { ok: true });
     }
     if (url.pathname === '/webhooks/log') return json(res, 200, { lastWebhookAt, events: hookLog });
     if (url.pathname === '/email/send' && req.method === 'POST') {
@@ -396,12 +427,19 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// resolve the configured event BEFORE listening, so the wall never boots into demo mode while its event link is still being looked up
+if (EVENT_REF) {
+  try { await applyEvent(EVENT_REF); }
+  catch (e) { console.log(`  ✗ could not resolve LUMA_EVENT_URL/LUMA_EVENT_ID "${EVENT_REF}": ${e.message} — retrying every 15 s`); const retry = setInterval(() => applyEvent(EVENT_REF).then(() => clearInterval(retry)).catch(() => {}), 15_000); }
+} else if (state.config.eventId) applyEvent(state.config.eventId).catch(() => {});   // name only; the id is already known
+
 server.listen(PORT, () => {
   const lan = Object.values(os.networkInterfaces()).flat().find(i => i && i.family === 'IPv4' && !i.internal)?.address;
   console.log(`\n  ● Grok Bot check-in wall`);
   console.log(`    local   http://localhost:${PORT}`);
   if (lan) console.log(`    lan     http://${lan}:${PORT}   (open on a second device for the desk)`);
-  console.log(`    luma    ${KEY ? `API key loaded · polling ${state.config.pollEnabled ? `ON every ${Math.round((state.config.pollMs || 5000) / 1000)}s` : 'OFF'}` : 'NO API KEY → wall runs in demo mode (set LUMA_API_KEY in .env)'}`);
+  console.log(`    event   ${event.id ? `${event.id}${event.name ? ` · ${event.name}` : ''}` : EVENT_REF ? `UNRESOLVED (${EVENT_REF})` : state.config.eventId || 'not set → set LUMA_EVENT_URL in .env'}${EVENT_NAME ? ` · headline "${EVENT_NAME}"` : ''}`);
+  console.log(`    luma    ${KEY ? `API key loaded · polling ${state.config.pollEnabled ? `ON every ${Math.round((state.config.pollMs || 5000) / 1000)}s` : 'OFF (flip POLL on in the desk console)'}` : 'NO API KEY → wall runs in demo mode (set LUMA_API_KEY in .env)'}`);
   console.log(`    auth    ${WALL_TOKEN ? 'token set → open /?key=' + WALL_TOKEN.slice(0, 4) + '…' : 'OPEN — set WALL_TOKEN before exposing this publicly'}`);
   if (PUBLIC_URL) console.log(`    public  ${PUBLIC_URL}`);
   console.log(`    codes   A=${CODES.A.length}  B=${CODES.B.length}   allocated so far: ${state.allocations.length}`);

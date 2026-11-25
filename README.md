@@ -23,10 +23,58 @@ On a fresh checkout with no configured event, the wall runs a demo with fake gue
 placeholder codes. Press `Space` to fake a check-in, `F` for fullscreen. Once an event is
 configured, `/` shows persisted real check-ins; use `?demo` to request the fake stream.
 
+## One repo, many events
+
+Everything event-specific lives in `.env` (and `data/`), so each meetup is just another
+copy of the config:
+
+```sh
+LUMA_EVENT_URL=https://luma.com/spacexai-zhengzhou1128   # which Luma event to read
+EVENT_NAME=                                              # headline; empty = the event's Luma title
+LUMA_POLL_ON_START=0                                     # polling always boots OFF
+```
+
+`LUMA_EVENT_URL` takes a luma.com link, a bare slug, or an `evt-…` id. It is resolved to the
+event id and title through Luma's public page API at startup, so no API key or login is
+needed for that step. The wall headline is `EVENT_NAME` if set, otherwise the event's own
+Luma title (also used in the email subject). The poller and the wall always follow the same
+event: the poller asks the wall which one it is serving. You can also paste a different
+link in the desk console under **settings** (`D` → settings → *luma event link or id*).
+
+For a new city: copy `.env.example` to a fresh `.env`, use a fresh `data/` (or press
+**reset allocations**), and put that city's `data/codes.json` in place. `.env` always beats
+the event stored in `data/state.json`.
+
+## Is check-in polling working? (status light)
+
+Polling is a switch, **off by default**: open the desk console (bottom-right **desk**
+button, or `D`) and use its **POLL** toggle. The server forgets its previous setting on
+every restart (`LUMA_POLL_ON_START=1` opts back in). While it is off nothing is requested
+from Luma.
+
+A status light shows whether detection is really alive, in the bottom bar of the venue
+screen and as a chip in the desk console header (hover for details):
+
+| status | meaning |
+| --- | --- |
+| `POLL ○ OFF` | the switch is off; nothing is being read |
+| `LUMA ● LIVE 2s` | last successful poll finished 2 s ago |
+| `POLLER ✗ OFFLINE` | POLL is on but the helper's heartbeat stopped (is `npm run checkins:on` still running?) |
+| `POLLER ✗ NOT RUNNING` | POLL is on and no helper has ever reported |
+| `LUMA ✗ LOGIN` | the saved Luma session expired: `npm run checkins:login`, restart the helper |
+| `LUMA ✗ <message>` | the last poll failed (network, Luma error, or the wall refused a check-in) |
+| `WALL ✗ RECONNECTING` | this page lost the wall server |
+
+The helper POSTs a heartbeat to the wall after every poll (`POST /poller/status`), so the
+light reflects real Luma requests rather than just "the process exists".
+
 ## Standalone check-in poller
 
-`luma-checkin-poller.mjs` reuses a local Chrome login to read the organizer's checked-in
-list; it does not require a Luma API key. Polling is **off by default**, so this command
+`luma-checkin-poller.mjs` is a Node script on the organizer's machine, not frontend code. It
+drives a local Chrome (Playwright, persistent profile under `data/luma-browser-profile/`)
+that is logged in to Luma, calls Luma's organizer check-in list from inside that page, and
+POSTs new check-ins to the wall's `/allocate`. The wall page itself only polls the wall
+server. It does not require a Luma API key. Polling is **off by default**, so this command
 makes no network request:
 
 ```sh
@@ -62,8 +110,9 @@ may change it. The API-key/webhook setup below remains the official hosted optio
 ## Running it for real
 
 1. `cp .env.example .env` and fill in:
-   - `EVENT_NAME` — the headline on the wall and the name in the email.
-   - `LUMA_API_KEY` (Luma → Settings → Developer → API Keys) and `LUMA_EVENT_ID` (`evt-…`).
+   - `LUMA_EVENT_URL` — the event's luma.com link (see *One repo, many events*).
+   - `EVENT_NAME` — optional headline override; defaults to the event's Luma title.
+   - `LUMA_API_KEY` (Luma → Settings → Developer → API Keys), only for the official-API mode.
    - `RESEND_API_KEY` and `EMAIL_FROM` (the sender domain must be verified in Resend).
    - `WALL_TOKEN` — any secret; the wall is opened as `/?key=<token>`.
    - `PUBLIC_URL` — the public https URL once hosted (used for the email hero image and to
@@ -98,9 +147,10 @@ allocations and email status and survives restarts. The hosted HTML never embeds
 
 ## Staff console
 
-Open the wall with `&desk` in the URL and press `D`: search guests, see a guest's code and
-QR, resend their email, release a code back to the pool, do a manual check-in for walk-ins,
-export a CSV, change settings (event, pool mode, poll interval).
+Click the **desk** button in the bottom-right corner (or press `D`; `?desk` still auto-opens
+it): search guests, see a guest's code and QR, resend their email, release a code back to
+the pool, do a manual check-in for walk-ins, export a CSV, change settings (event, pool
+mode, poll interval).
 
 ## How the email queue behaves
 
@@ -115,11 +165,11 @@ exist for emergencies. Guests with no email or no code left are recorded as skip
 | --- | --- |
 | `F` | fullscreen |
 | `Space` | demo only: fake a check-in |
-| `D` / `M` / `Shift+E` | with `&desk`: console, manual check-in, export CSV |
+| `D` / `M` / `Shift+E` | desk console / manual check-in / export CSV |
 
-`?demo` fake guests · `?desk` staff console · `?cell=22` bigger text · `?fine=2` chunkier
-backdrop glyphs · `?headline=…` override the headline · `?style=3&color=2&hold` freeze a
-bot form and colour · `?raw` 3D scene without the ASCII pass.
+`?demo` fake guests · `?desk` auto-open desk console · `?cell=22` bigger text · `?fine=2`
+chunkier backdrop glyphs · `?headline=…` override the headline · `?style=3&color=2&hold`
+freeze a bot form and colour · `?raw` 3D scene without the ASCII pass.
 
 ## Layout of the repo
 

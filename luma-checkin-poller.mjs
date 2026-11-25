@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { resolveEvent } from './luma-event.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_EVENT_ID = 'evt-diEbVteSq6oiKcf';
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data/check-in-cache.json');
 const DEFAULT_PROFILE_DIR = path.join(ROOT, 'data/luma-browser-profile');
 
@@ -188,7 +188,8 @@ async function notifyWall(guest, { wallUrl, wallToken }) {
   return body.allocation;
 }
 
-async function wallPollingEnabled({ wallUrl, wallToken }) {
+// Reads the desk-console switch (and which event the wall is serving) from the wall server.
+async function wallControl({ wallUrl, wallToken }) {
   const url = new URL('/state', wallUrl);
   const headers = { accept: 'application/json' };
   if (wallToken) headers['x-wall-key'] = wallToken;
@@ -200,9 +201,25 @@ async function wallPollingEnabled({ wallUrl, wallToken }) {
     if (!response.ok) {
       throw new Error(`wall ${response.status}: ${body.message || response.statusText}`);
     }
-    return Boolean(body.config?.pollEnabled);
+    return { enabled: Boolean(body.config?.pollEnabled), eventId: body.config?.eventId || null };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+// Heartbeat the wall turns into its status light. Best effort: a failure here never stops polling.
+async function reportStatus(status, details, { wallUrl, wallToken }) {
+  const headers = { 'content-type': 'application/json', accept: 'application/json' };
+  if (wallToken) headers['x-wall-key'] = wallToken;
+  try {
+    await fetch(new URL('/poller/status', wallUrl), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ status, ...details }),
+      signal: AbortSignal.timeout(3_000),
+    });
+  } catch {
+    // wall unreachable: the poll loop reports that itself
   }
 }
 
@@ -249,7 +266,8 @@ function usage() {
     '  node luma-checkin-poller.mjs --status     Read the local cache only',
     '',
     'Environment:',
-    `  LUMA_EVENT_ID                    Default: ${DEFAULT_EVENT_ID}`,
+    '  LUMA_EVENT_URL=<luma.com link>    Event to read (or LUMA_EVENT_ID=evt-...). If neither is set,',
+    '                                    the event the wall server is already serving is used',
     '  LUMA_CHECKIN_POLL_ENABLED=1       Alternative to --on',
     '  LUMA_CHECKIN_POLL_MS=2000         Poll interval (minimum 1000 ms)',
     '  LUMA_CHECKIN_CACHE_FILE=<path>     Override the local cache file',
@@ -261,6 +279,44 @@ function usage() {
   ].join('\n');
 }
 
+const checkInUrl = eventId =>
+  `https://luma.com/check-in/${encodeURIComponent(eventId)}/guests?tab=checked_in`;
+
+// Which event to read. The wall server is the single source of truth (it resolves LUMA_EVENT_URL
+// on boot and the desk console can change it); .env is the fallback when the wall isn't up yet.
+async function pickEvent(wall) {
+  const ref = process.env.LUMA_EVENT_URL || process.env.LUMA_EVENT_ID || '';
+  const fromEnv = ref
+    ? await resolveEvent(ref).catch(error => {
+        emit({ type: 'event_lookup_failed', ref, message: error.message }, process.stderr);
+        return null;
+      })
+    : null;
+  let wallEventId = null;
+  try {
+    wallEventId = (await wallControl(wall)).eventId;
+  } catch {
+    // wall not reachable yet
+  }
+  if (wallEventId && fromEnv && wallEventId !== fromEnv.id) {
+    emit(
+      {
+        type: 'event_mismatch',
+        message: `.env points at ${fromEnv.id} but the wall is serving ${wallEventId}; following the wall. Restart the wall to apply .env.`,
+      },
+      process.stderr,
+    );
+  }
+  const id = wallEventId || fromEnv?.id;
+  if (!id) {
+    throw new Error(
+      'No Luma event configured. Set LUMA_EVENT_URL=https://luma.com/<event> in .env (and start the wall first).',
+    );
+  }
+  const info = fromEnv?.id === id ? fromEnv : await resolveEvent(id).catch(() => ({ id, name: '' }));
+  return { id, name: info.name || '' };
+}
+
 async function main() {
   loadEnv();
   const args = new Set(process.argv.slice(2));
@@ -269,19 +325,26 @@ async function main() {
     return;
   }
 
-  const eventId = process.env.LUMA_EVENT_ID || DEFAULT_EVENT_ID;
   const cacheFile = path.resolve(process.env.LUMA_CHECKIN_CACHE_FILE || DEFAULT_CACHE_FILE);
-  let cache = readCache(cacheFile, eventId);
+  const wallUrl = process.env.WALL_URL || `http://127.0.0.1:${process.env.PORT || 8787}`;
+  const wallToken = process.env.WALL_TOKEN || '';
+  const wall = { wallUrl, wallToken };
 
   if (args.has('--status')) {
+    let cached = {};
+    try {
+      cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    } catch {
+      // no cache yet
+    }
     emit({
       type: 'status',
       enabled: false,
-      eventId,
+      eventId: cached.eventId || null,
       cacheFile,
-      initialized: cache.initialized,
-      latest: cache.latest,
-      updatedAt: cache.updatedAt,
+      initialized: Boolean(cached.initialized),
+      latest: cached.latest || null,
+      updatedAt: cached.updatedAt || null,
     });
     return;
   }
@@ -310,8 +373,10 @@ async function main() {
   const notifyWallEnabled =
     process.env.LUMA_CHECKIN_NOTIFY_WALL === undefined ||
     isTrue(process.env.LUMA_CHECKIN_NOTIFY_WALL);
-  const wallUrl = process.env.WALL_URL || `http://127.0.0.1:${process.env.PORT || 8787}`;
-  const wallToken = process.env.WALL_TOKEN || '';
+
+  let { id: eventId, name: eventName } = await pickEvent(wall);
+  let cache = readCache(cacheFile, eventId);
+
   let stopped = false;
   let timer = null;
   let wake = null;
@@ -335,6 +400,23 @@ async function main() {
   let context = null;
   let page = null;
   let prefetchedGuests = null;
+  let lastOkAt = 0;
+  let lastCount = 0;
+
+  const report = (status, extra = {}) =>
+    reportStatus(
+      status,
+      {
+        eventId,
+        eventName,
+        pollMs,
+        lastOkAt,
+        checkedInCount: lastCount,
+        latest: cache.latest,
+        ...extra,
+      },
+      wall,
+    );
 
   const waitForLogin = async () => {
     let announced = false;
@@ -349,17 +431,15 @@ async function main() {
           if (!(error instanceof AuthenticationRequiredError)) throw error;
         }
       }
+      const message = 'Complete the Luma login in the opened Chrome window.';
+      await report('login_required', { message });
       if (headless) {
         throw new Error(
           'The saved Luma session is not authenticated. Run npm run checkins:login.',
         );
       }
       if (!announced) {
-        emit({
-          type: 'login_required',
-          eventId,
-          message: 'Complete the Luma login in the opened Chrome window.',
-        });
+        emit({ type: 'login_required', eventId, message });
         announced = true;
       }
       await wait(1_000);
@@ -367,6 +447,7 @@ async function main() {
     return [];
   };
 
+  // Returns how many new check-ins the wall refused (they stay unseen and are retried next poll).
   const poll = async () => {
     const wasInitialized = cache.initialized;
     const guests =
@@ -412,20 +493,36 @@ async function main() {
     result.cache.seen = result.cache.seen.filter(key => !failedKeys.has(key));
     cache = result.cache;
     writeCache(cacheFile, cache);
+    lastCount = guests.length;
+    return failedKeys.size;
+  };
+
+  // The desk console can point the wall at another event while we run: follow it.
+  const switchEvent = async nextId => {
+    const info = await resolveEvent(nextId).catch(() => ({ id: nextId, name: '' }));
+    eventId = info.id;
+    eventName = info.name || '';
+    cache = readCache(cacheFile, eventId);
+    prefetchedGuests = null;
+    lastOkAt = 0;
+    lastCount = 0;
+    await page.goto(checkInUrl(eventId), { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    emit({ type: 'event_changed', eventId, eventName });
   };
 
   try {
+    await report('starting');
     context = await launchBrowser(profileDir, headless);
     context.once('close', stop);
     page = context.pages()[0] || (await context.newPage());
-    const checkInUrl = `https://luma.com/check-in/${encodeURIComponent(eventId)}/guests?tab=checked_in`;
-    await page.goto(checkInUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.goto(checkInUrl(eventId), { waitUntil: 'domcontentloaded', timeout: 30_000 });
     prefetchedGuests = await waitForLogin();
     if (stopped) return;
 
     emit({
       type: 'browser_ready',
       eventId,
+      eventName,
       profileDir,
       pollMs,
       wallNotifications: notifyWallEnabled,
@@ -441,22 +538,32 @@ async function main() {
     do {
       try {
         if (!once) {
-          const switchEnabled = await wallPollingEnabled({ wallUrl, wallToken });
-          if (!switchEnabled) {
+          const control = await wallControl(wall);
+          if (control.eventId && control.eventId !== eventId) await switchEvent(control.eventId);
+          if (!control.enabled) {
             prefetchedGuests = null;
             if (pollingActive !== false) {
               emit({ type: 'polling_paused', eventId, message: 'Enable polling in the desk console.' });
             }
             pollingActive = false;
             consecutiveErrors = 0;
+            await report('paused');
             await wait(1_000);
             continue;
           }
           if (pollingActive !== true) emit({ type: 'polling_resumed', eventId });
           pollingActive = true;
         }
-        await poll();
+        const refused = await poll();
         consecutiveErrors = 0;
+        lastOkAt = Date.now();
+        if (refused) {
+          await report('error', {
+            message: `wall refused ${refused} check-in${refused > 1 ? 's' : ''}; retrying`,
+          });
+        } else {
+          await report('polling');
+        }
       } catch (error) {
         if (error instanceof AuthenticationRequiredError) {
           prefetchedGuests = await waitForLogin();
@@ -472,6 +579,7 @@ async function main() {
           },
           process.stderr,
         );
+        await report('error', { message: error.message });
         if (once) process.exitCode = 1;
       }
       if (once || stopped) break;
@@ -479,6 +587,7 @@ async function main() {
       await wait(delay);
     } while (!stopped);
   } finally {
+    await report('stopped');
     if (context) await context.close().catch(() => {});
   }
 }

@@ -20,10 +20,10 @@
   /* desk console */
   #desk{position:fixed;inset:20px;background:rgba(6,7,10,.96);border:1px solid var(--accent);display:flex;flex-direction:column;font-size:13px;line-height:1.5;box-shadow:0 0 0 1px #000,0 40px 120px rgba(0,0,0,.85);z-index:10}
   .dk-head{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
-  .dk-title{color:var(--accent);font-weight:600;letter-spacing:.08em}
+  .dk-title{color:var(--accent);font-weight:600;letter-spacing:.04em}
   .dk-sub{color:var(--dim);margin-left:8px}
   .dk-spacer{flex:1}
-  .dk-poll{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);padding:5px 9px;cursor:pointer;white-space:nowrap;color:var(--dim);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  .dk-poll{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);padding:5px 9px;cursor:pointer;white-space:nowrap;color:var(--dim);font-size:11px;letter-spacing:.04em}
   .dk-poll:hover{border-color:var(--accent);color:#fff}
   .dk-poll input{position:absolute;opacity:0;pointer-events:none}
   .dk-poll-track{width:30px;height:14px;border:1px solid #555;background:#111;position:relative;box-sizing:border-box}
@@ -32,6 +32,11 @@
   .dk-poll input:checked+.dk-poll-track::after{background:var(--accent);transform:translateX(16px)}
   .dk-poll input:focus-visible+.dk-poll-track{outline:2px solid #fff;outline-offset:2px}
   .dk-poll:has(input:disabled){opacity:.45;cursor:not-allowed}
+  .dk-stat{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);padding:5px 9px;white-space:nowrap;color:var(--dim);font-size:11px;letter-spacing:.04em;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+  .dk-stat i{width:8px;height:8px;border-radius:50%;background:#555;flex:none}
+  .dk-stat.ok{color:#fff;border-color:var(--accent)} .dk-stat.ok i{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+  .dk-stat.warn{color:#ffd166;border-color:#7a5c14} .dk-stat.warn i{background:#ffd166}
+  .dk-stat.bad{color:#ff7b7b;border-color:#ff4d4d} .dk-stat.bad i{background:#ff4d4d}
   .dk-body{display:flex;flex:1;min-height:0}
   .dk-left{width:46%;display:flex;flex-direction:column;border-right:1px solid var(--line)}
   .dk-left input{margin:12px 14px;flex:none}
@@ -68,31 +73,45 @@
   .field input,.field select{width:100%;box-sizing:border-box}
   #toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);background:#0b0d12;border:1px solid var(--accent);padding:10px 16px;font-size:13px;z-index:30;pointer-events:none}
   #err{position:fixed;top:0;left:0;right:0;background:#3a0b0b;color:#ffb3b3;padding:8px 14px;font-size:12px;z-index:40;white-space:pre-wrap}
+  /* Bottom hover reveal: large SETTINGS entry appears only while the cursor is in the lower third. */
+  #desk-open{position:fixed;left:50%;bottom:42px;z-index:8;transform:translate(-50%,18px);opacity:0;pointer-events:none;display:inline-flex;flex-direction:column;align-items:center;gap:10px;padding:18px 40px 16px;background:linear-gradient(180deg,rgba(6,7,10,.55),rgba(6,7,10,.92));border:1px solid var(--accent);color:var(--accent);font:700 clamp(32px,5vw,60px)/1.1 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",var(--mono);letter-spacing:.12em;cursor:pointer;box-shadow:0 16px 48px rgba(0,0,0,.55);transition:opacity .18s ease,transform .18s ease,color .12s ease,border-color .12s ease}
+  #desk-open .desk-open-sub{font:500 13px/1.4 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",var(--mono);letter-spacing:.08em;color:var(--dim)}
+  #desk-open .desk-open-sub kbd{border-color:#555;color:var(--fg);font-size:10px;padding:1px 5px;letter-spacing:.04em;margin:0 2px;font-family:var(--mono)}
+  body.desk-reveal:not(.desk-open) #desk-open{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+  #desk-open:hover,#desk-open:focus-visible{color:#fff;border-color:#fff}
+  #desk-open:focus-visible{outline:2px solid #fff;outline-offset:3px}
+  body.desk-open #desk-open{display:none}
 </style>
 </head>
 <body>
 <div id="stage"><canvas id="gl"></canvas></div>
 
+<button id="desk-open" type="button" title="打开设置">
+  设置
+  <span class="desk-open-sub">签到控制台 · 按 <kbd>D</kbd></span>
+</button>
+
 <div id="desk" hidden>
   <div class="dk-head">
-    <span class="dk-title">▌ DESK CONSOLE</span><span class="dk-sub" id="dk-mode"></span>
+    <span class="dk-title">▌ 签到控制台</span><span class="dk-sub" id="dk-mode"></span>
     <span class="dk-spacer"></span>
-    <label class="dk-poll" for="dk-polling" title="Start or pause Luma check-in polling">
+    <span class="dk-stat" id="dk-stat" role="status" aria-live="polite"><i></i><span id="dk-stat-text">状态</span></span>
+    <label class="dk-poll" for="dk-polling" title="开启或暂停 Luma 签到轮询">
       <input id="dk-polling" type="checkbox" role="switch">
       <span class="dk-poll-track" aria-hidden="true"></span>
-      <span id="dk-poll-label">poll off</span>
+      <span id="dk-poll-label">轮询关</span>
     </label>
-    <button id="dk-manual">+ manual check-in</button>
-    <button id="dk-export">export csv</button>
-    <button id="dk-settings">settings</button>
-    <button id="dk-close">close [esc]</button>
+    <button id="dk-manual">+ 手动签到</button>
+    <button id="dk-export">导出 CSV</button>
+    <button id="dk-settings">设置</button>
+    <button id="dk-close">关闭 [esc]</button>
   </div>
   <div class="dk-body">
     <div class="dk-left">
-      <input id="dk-q" placeholder="search name or email…" autocomplete="off" spellcheck="false">
+      <input id="dk-q" placeholder="搜索姓名或邮箱…" autocomplete="off" spellcheck="false">
       <div id="dk-list"></div>
     </div>
-    <div class="dk-right" id="dk-detail"><div class="dk-empty">select a guest to see their credit code</div></div>
+    <div class="dk-right" id="dk-detail"><div class="dk-empty">选择一位来宾查看兑换码</div></div>
   </div>
 </div>
 <div id="modal" hidden><div class="md-box" id="md-box"></div></div>
@@ -163,7 +182,7 @@ const app = {
   config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false },
   labels: (CODES && CODES.labels) || { A: 'Pool A', B: 'Pool B' },
   poolTotals: { A: CODES ? CODES.A.length : 0, B: CODES ? CODES.B.length : 0 },
-  lastSync: 0, syncing: false, error: '', initial: true, persist: false, email: null, lastWebhookAt: null, serverPolls: false, failedSyncs: 0, headline: '',
+  poller: null, pollerAt: 0, event: null, lastSync: 0, syncing: false, error: '', initial: true, persist: false, email: null, lastWebhookAt: null, serverPolls: false, failedSyncs: 0, headline: '',
   dirty: true,
 };
 const celeb = { active: null, queue: [], t0: 0, dur: 5.2, flash: 0 };
@@ -286,6 +305,8 @@ async function syncState() {
   try {
     const r = await api('/state'); if (!r.ok) throw new Error('state ' + r.status);
     const s = await r.json(); app.failedSyncs = 0;
+    app.poller = s.poller || null; app.pollerAt = Date.now(); app.event = s.event || null;
+    if (s.eventName) app.headline = s.eventName;
     app.labels = s.labels || app.labels; app.poolTotals = s.pools || app.poolTotals;
     if (app.serverPolls && s.luma) {
       if (s.luma.event) { app.eventId = s.luma.event.id; app.eventName = s.luma.event.name || ''; }
@@ -807,8 +828,48 @@ function layout() {
   };
 }
 const IDLE_LINES = ['scan your luma qr at the door to check in', 'every check-in sends cursor credits to your inbox', 'welcome to the meetup'];
-const DESK = params.has('desk');
+// Desk console is always reachable via the bottom-right button (and D). ?desk just auto-opens it on load.
+let DESK = params.has('desk');
 let idleT0 = 0, idleI = 0;
+let guestsLoader = null;
+function ensureGuestsLoader() {
+  if (guestsLoader || !app.serverPolls) return;
+  const loadGuests = async () => { try { for (const g of (await (await api('/guests')).json()).guests || []) app.guests.set(g.key, { ...g, source: 'luma' }); app.dirty = true; } catch {} };
+  loadGuests(); guestsLoader = setInterval(loadGuests, 30_000);
+}
+
+// One answer to "is check-in detection actually working?", shared by the venue screen's bottom bar and the desk console.
+// level: ok | warn | bad | off | demo
+function pollStatus() {
+  const now = Date.now(), secs = ms => Math.max(0, Math.round(ms / 1000));
+  // text = ASCII wall bottom bar (English); label = desk chip (Chinese)
+  const st = (level, text, label, detail) => ({ level, text, label, detail });
+  const bad = (text, label, detail) => st('bad', text, label, detail);
+  const warn = (text, label, detail) => st('warn', text, label, detail);
+  if (app.mode === 'demo') return st('demo', 'DEMO', '演示', '假数据；未连接 Luma');
+  if (app.persist && app.failedSyncs >= 3) return bad('WALL ✗ RECONNECTING', '欢迎墙 ✗ 重连中', '页面连不上欢迎墙服务');
+  if (!app.persist) return app.error ? bad('LUMA ✗ ' + app.error.slice(0, 40), 'Luma ✗ ' + app.error.slice(0, 24), app.error) : st('ok', 'LUMA ● LIVE', 'Luma ● 正常', '本页正在直接轮询 Luma');
+  if (!app.config.pollEnabled) return st('off', 'POLL ○ OFF', '轮询 ○ 关', '轮询已关闭：开门时在控制台（D）打开「轮询」');
+  const options = [];
+  if (app.serverPolls) {   // official API poller inside serve.mjs
+    const limit = Math.max(15_000, 4 * (app.config.pollMs || 5000)), age = now - app.lastSync;
+    if (app.error) options.push(bad('LUMA ✗ ' + app.error.slice(0, 40), 'Luma ✗ ' + app.error.slice(0, 24), 'Luma API 错误：' + app.error));
+    else if (!app.lastSync || age > limit) options.push(bad('LUMA ✗ NO SYNC', 'Luma ✗ 无同步', '服务器已 ' + (app.lastSync ? secs(age) + ' 秒' : '一段时间') + ' 未访问 Luma API'));
+    else options.push(st('ok', `LUMA ● LIVE ${secs(age)}s`, `Luma ● 正常 ${secs(age)}秒`, `${secs(age)} 秒前轮询过 Luma API`));
+  }
+  const p = app.poller;   // browser-session helper (npm run checkins:on)
+  if (p) {
+    const age = p.ageMs + (now - app.pollerAt), limit = p.status === 'error' ? 35_000 : Math.max(10_000, 4 * (p.pollMs || 2000));
+    const who = p.eventName || p.eventId || '活动', last = p.latest && p.latest.username ? ` · 最近 ${publicName(p.latest.username)} ${fmtHM(p.latest.checkedInAt)}` : '';
+    if (age > limit) options.push(bad('POLLER ✗ OFFLINE', '轮询 ✗ 离线', `${secs(age)} 秒无心跳：checkins:on 是否还在跑？`));
+    else if (p.status === 'polling') options.push(st('ok', `LUMA ● LIVE ${secs(age)}s`, `Luma ● 正常 ${secs(age)}秒`, `${who} · 已签到 ${p.checkedInCount}${last} · ${secs(age)} 秒前轮询`));
+    else if (p.status === 'login_required') options.push(bad('LUMA ✗ LOGIN', 'Luma ✗ 需登录', 'Luma 登录已过期：运行 npm run checkins:login 后重启轮询'));
+    else if (p.status === 'error') options.push(bad('LUMA ✗ ' + (p.message || 'ERROR').slice(0, 40), 'Luma ✗ ' + (p.message || '错误').slice(0, 24), p.message || '轮询失败'));
+    else if (p.status === 'stopped') options.push(bad('POLLER ✗ STOPPED', '轮询 ✗ 已停止', '签到轮询进程已退出'));
+    else options.push(warn('POLLER ◌ STARTING', '轮询 ◌ 启动中', '签到轮询正在启动'));
+  } else if (!app.serverPolls) options.push(bad('POLLER ✗ NOT RUNNING', '轮询 ✗ 未运行', '轮询已开但无心跳：请运行 npm run checkins:on'));
+  return options.find(o => o.level === 'ok') || options[0];
+}
 
 function drawUI(t, L) {
   colorBuf.fill(0);
@@ -852,10 +913,7 @@ function drawBottom(t, L) {
   put(x, br, `${Math.round(pct * 100)}%`, GREY);
   // right-aligned status segments
   const seg = [];
-  if (app.mode === 'demo') seg.push(['DEMO', [255, 200, 80]]);
-  else if (app.failedSyncs >= 3) seg.push(['WALL ✗ RECONNECTING', [255, 90, 90]]);
-  else if (app.error) seg.push(['LUMA ✗ ' + app.error.slice(0, 40), [255, 90, 90]]);
-  else seg.push(['LUMA ● LIVE', A.rgb]);
+  const st = pollStatus(); seg.push([st.text, st.level === 'ok' ? A.rgb : st.level === 'bad' ? [255, 90, 90] : st.level === 'off' ? GREY : [255, 200, 80]]);
   if (app.server && app.mode !== 'demo' && app.email && app.email.enabled) { const mc = mailCounts(); seg.push([`MAIL ${mc.sent} SENT${mc.failed ? ` · ${mc.failed} FAILED` : ''}`, mc.failed ? [255, 90, 90] : GREY]); }
   seg.push([`CREDITS LEFT ${pad3(creditsLeft())}`, WHITE]);
   let rx = cols - 1;
@@ -950,79 +1008,104 @@ function guestRows() {
 }
 function renderDesk() {
   app.dirty = false;
-  renderPollToggle();
+  renderPollToggle(); renderStatus();
   const mc = mailCounts();
-  $('#dk-mode').textContent = `${app.mode.toUpperCase()} · ${app.feed.length} checked in · ${creditsLeft()} credits left${app.persist ? '' : app.mode === 'demo' ? ' · not saved' : ' · local storage'}${app.server && app.mode !== 'demo' ? (app.email && app.email.enabled ? ` · ✉ ${mc.sent} sent${mc.failed ? `, ${mc.failed} failed` : ''}${app.email.dryRun ? ' (dry run)' : ''}` : ' · ✉ off') : ''}`;
+  const modeLabel = { boot: '启动', demo: '演示', luma: 'Luma', manual: '手动' }[app.mode] || app.mode;
+  $('#dk-mode').textContent = `${modeLabel} · 已签到 ${app.feed.length} · 剩余兑换码 ${creditsLeft()}${app.persist ? '' : app.mode === 'demo' ? ' · 不保存' : ' · 仅本机'}${app.server && app.mode !== 'demo' ? (app.email && app.email.enabled ? ` · ✉ 已发 ${mc.sent}${mc.failed ? `，失败 ${mc.failed}` : ''}${app.email.dryRun ? '（试跑）' : ''}` : ' · ✉ 关闭') : ''}`;
   const list = guestRows();
   deskList.innerHTML = list.slice(0, 300).map(g => `<div class="g-row${g.key === selectedKey ? ' sel' : ''}" data-key="${esc(g.key)}">
-      <div><div class="g-name">${esc(g.name || g.email || 'Guest')}</div><div class="g-email">${esc(g.email || '')}</div></div>
-      <span class="badge${g.checkedInAt ? ' in' : ''}">${g.checkedInAt ? 'in ' + fmtHM(g.checkedInAt) : 'registered'}</span>
-      <span class="badge code">${g.alloc ? esc(codeTag(g.alloc)) : '—'}</span>${mailBadge(g.alloc)}</div>`).join('') || `<div class="dk-empty" style="padding:14px">no guests match</div>`;
+      <div><div class="g-name">${esc(g.name || g.email || '来宾')}</div><div class="g-email">${esc(g.email || '')}</div></div>
+      <span class="badge${g.checkedInAt ? ' in' : ''}">${g.checkedInAt ? '已签 ' + fmtHM(g.checkedInAt) : '已报名'}</span>
+      <span class="badge code">${g.alloc ? esc(codeTag(g.alloc)) : '—'}</span>${mailBadge(g.alloc)}</div>`).join('') || `<div class="dk-empty" style="padding:14px">没有匹配的来宾</div>`;
   renderDetail(list.find(g => g.key === selectedKey));
 }
+function renderStatus() {
+  const st = pollStatus(), el = $('#dk-stat');
+  el.className = 'dk-stat ' + (st.level === 'demo' ? 'warn' : st.level);
+  $('#dk-stat-text').textContent = (st.label || st.text).replace(/[●○✗◌]\s*/g, '').trim();
+  el.title = st.detail || '';
+}
+setInterval(() => { if (!desk.hidden) { renderStatus(); renderPollToggle(); } }, 1000);   // also picks up a POLL change made from another device
 function renderPollToggle() {
   const input = $('#dk-polling'), label = $('#dk-poll-label');
   const enabled = Boolean(app.config.pollEnabled);
   input.checked = enabled;
   input.disabled = !app.server;
-  label.textContent = `poll ${enabled ? 'on' : 'off'}`;
+  label.textContent = enabled ? '轮询开' : '轮询关';
 }
 function mailBadge(a) {
   const m = a && a.mail; if (!m || m.status === 'skipped') return '<span></span>';
   const cls = m.status === 'sent' || m.status === 'dry' ? ' in' : m.status === 'failed' ? ' bad' : '';
-  return `<span class="badge${cls}">${m.status === 'sent' ? '✉ sent' : m.status === 'dry' ? '✉ dry' : m.status === 'failed' ? '✉ failed' : '✉ …'}</span>`;
+  return `<span class="badge${cls}">${m.status === 'sent' ? '✉ 已发' : m.status === 'dry' ? '✉ 试跑' : m.status === 'failed' ? '✉ 失败' : '✉ …'}</span>`;
 }
 function mailLine(a) {
   const m = a.mail;
-  if (!app.email || !app.email.enabled) return 'delivery is off — set RESEND_API_KEY in .env and restart serve.mjs';
-  if (!m) return 'not sent yet';
-  if (m.status === 'sent') return `sent ${fmtHM(m.at)} to ${m.to}`;
-  if (m.status === 'dry') return `dry run ${fmtHM(m.at)} → ${m.to}`;
-  if (m.status === 'failed') return `failed: ${m.error}`;
-  if (m.status === 'queued') return 'sending…';
-  return `not sent (${m.reason || m.status})`;
+  if (!app.email || !app.email.enabled) return '邮件未开启 — 在 .env 设置 RESEND_API_KEY 后重启 serve.mjs';
+  if (!m) return '尚未发送';
+  if (m.status === 'sent') return `${fmtHM(m.at)} 已发至 ${m.to}`;
+  if (m.status === 'dry') return `${fmtHM(m.at)} 试跑 → ${m.to}`;
+  if (m.status === 'failed') return `失败：${m.error}`;
+  if (m.status === 'queued') return '发送中…';
+  return `未发送（${m.reason || m.status}）`;
 }
 function qrDataUrl(text) { try { const q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createDataURL(6, 2); } catch { return ''; } }
 function renderDetail(g) {
-  if (!g) { deskDetail.innerHTML = `<div class="dk-empty">select a guest to see their credit code</div><div class="hint">keys: <kbd>D</kbd> toggle desk · <kbd>M</kbd> manual check-in · <kbd>F</kbd> fullscreen · <kbd>Esc</kbd> close</div>`; return; }
+  if (!g) { deskDetail.innerHTML = `<div class="dk-empty">选择一位来宾查看兑换码</div><div class="hint">快捷键：<kbd>D</kbd> 开关控制台 · <kbd>M</kbd> 手动签到 · <kbd>F</kbd> 全屏 · <kbd>Esc</kbd> 关闭</div>`; return; }
   const a = g.alloc;
-  let html = `<h2 class="d-name">${esc(g.name || 'Guest')}</h2><div class="d-meta">${esc(g.email || 'no email')} · ${g.checkedInAt ? 'checked in ' + fmtHM(g.checkedInAt) + (g.source === 'manual' || (a && a.source === 'manual') ? ' (manual)' : ' via luma') : 'registered, not checked in'}</div>`;
+  let html = `<h2 class="d-name">${esc(g.name || '来宾')}</h2><div class="d-meta">${esc(g.email || '无邮箱')} · ${g.checkedInAt ? '已于 ' + fmtHM(g.checkedInAt) + ' 签到' + (g.source === 'manual' || (a && a.source === 'manual') ? '（手动）' : '（经 Luma）') : '已报名，尚未签到'}</div>`;
   if (a) {
-    if (!a.codes.length) html += `<div class="d-code"><div><div class="p">no codes left</div>all referral codes were allocated before this guest checked in.</div></div>`;
+    if (!a.codes.length) html += `<div class="d-code"><div><div class="p">兑换码已发完</div>该来宾签到时，所有兑换码都已分配完。</div></div>`;
     for (const cd of a.codes) {
       html += `<div class="d-code"><img alt="qr" src="${qrDataUrl(cd.url)}"><div><div class="p">${esc(app.labels[cd.pool] || cd.pool)} · #${pad3(codeIndex(cd))}</div><div class="c">${esc(cd.code)}</div><div class="u">${esc(cd.url)}</div>
-        <div class="row"><button class="primary" data-copy="${esc(cd.url)}">copy link</button><button data-copy="${esc(cd.code)}">copy code</button></div></div></div>`;
+        <div class="row"><button class="primary" data-copy="${esc(cd.url)}">复制链接</button><button data-copy="${esc(cd.code)}">复制兑换码</button></div></div></div>`;
     }
     if (app.server) {
       const canSend = app.email && app.email.enabled && a.codes.length && a.email;
-      html += `<div class="d-mail"><span class="p">email</span><span>${esc(mailLine(a))}</span>${canSend ? `<button data-mail="${esc(a.key)}">${a.mail && (a.mail.status === 'sent' || a.mail.status === 'dry') ? 'resend' : 'send now'}</button>` : ''}</div>`;
-      html += `<div class="row"><button class="danger" data-release="${esc(a.key)}">release code</button><span class="hint" style="margin:0;align-self:center">returns the code to the pool; if the guest is still checked in they get re-allocated (and re-emailed) within seconds</span></div>`;
+      html += `<div class="d-mail"><span class="p">邮件</span><span>${esc(mailLine(a))}</span>${canSend ? `<button data-mail="${esc(a.key)}">${a.mail && (a.mail.status === 'sent' || a.mail.status === 'dry') ? '重发' : '立即发送'}</button>` : ''}</div>`;
+      html += `<div class="row"><button class="danger" data-release="${esc(a.key)}">收回兑换码</button><span class="hint" style="margin:0;align-self:center">将兑换码退回池中；若来宾仍为已签到，几秒内会重新分配并再发邮件</span></div>`;
     }
   } else {
-    html += `<div class="row"><button class="primary" data-checkin="${esc(g.key)}">check in + allocate credits</button></div><div class="hint">allocates the next unused referral code and plays the welcome on the wall.</div>`;
+    html += `<div class="row"><button class="primary" data-checkin="${esc(g.key)}">签到并分配兑换码</button></div><div class="hint">分配下一个未使用的兑换码，并在欢迎墙上播放欢迎动画。</div>`;
   }
   deskDetail.innerHTML = html;
 }
 deskList.addEventListener('click', e => { const row = e.target.closest('.g-row'); if (!row) return; selectedKey = row.dataset.key; app.dirty = true; renderDesk(); });
 deskDetail.addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.copy) { try { await navigator.clipboard.writeText(b.dataset.copy); toast('copied'); } catch { toast('copy failed — select it manually'); } }
+  if (b.dataset.copy) { try { await navigator.clipboard.writeText(b.dataset.copy); toast('已复制'); } catch { toast('复制失败 — 请手动选择'); } }
   if (b.dataset.release) {
-    if (!confirm('Release this guest\'s code back to the pool? If they are still checked in, they will be re-allocated and emailed again.')) return;
+    if (!confirm('确定收回该来宾的兑换码？若仍为已签到，会重新分配并再次发邮件。')) return;
     const r = await api('/release', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: b.dataset.release }) });
-    if (r.ok) { app.alloc.delete(b.dataset.release); const i = app.feed.findIndex(f => f.key === b.dataset.release); if (i >= 0) app.feed.splice(i, 1); toast('released'); } else toast('release failed');
+    if (r.ok) { app.alloc.delete(b.dataset.release); const i = app.feed.findIndex(f => f.key === b.dataset.release); if (i >= 0) app.feed.splice(i, 1); toast('已收回'); } else toast('收回失败');
     app.dirty = true; renderDesk(); setTimeout(syncState, 1500);
   }
   if (b.dataset.mail) {
     b.disabled = true; const r = await api('/email/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: b.dataset.mail }) });
-    toast(r.ok ? 'email queued' : 'could not queue email'); setTimeout(syncState, 1500); setTimeout(syncState, 4000); setTimeout(() => { app.dirty = true; renderDesk(); }, 1800);
+    toast(r.ok ? '邮件已排队' : '无法排队发送'); setTimeout(syncState, 1500); setTimeout(syncState, 4000); setTimeout(() => { app.dirty = true; renderDesk(); }, 1800);
   }
-  if (b.dataset.checkin) { const g = app.guests.get(b.dataset.checkin); if (!g) return; g.checkedInAt = new Date().toISOString(); g.source = 'manual'; await ensureAllocated({ ...g, source: 'manual' }, { celebrate: true }); toast(`checked in ${g.name}`); app.dirty = true; renderDesk(); }
+  if (b.dataset.checkin) { const g = app.guests.get(b.dataset.checkin); if (!g) return; g.checkedInAt = new Date().toISOString(); g.source = 'manual'; await ensureAllocated({ ...g, source: 'manual' }, { celebrate: true }); toast(`已签到 ${g.name}`); app.dirty = true; renderDesk(); }
 });
 deskQ.addEventListener('input', () => { app.dirty = true; renderDesk(); });
-function openDesk() { desk.hidden = false; app.dirty = true; renderDesk(); deskQ.focus(); }
-function closeDesk() { desk.hidden = true; }
+function openDesk() {
+  DESK = true;
+  document.body.classList.add('desk-open');
+  desk.hidden = false;
+  ensureGuestsLoader();
+  app.dirty = true; renderDesk(); deskQ.focus();
+}
+function closeDesk() {
+  desk.hidden = true;
+  document.body.classList.remove('desk-open');
+}
+$('#desk-open').onclick = () => { openDesk(); settingsModal(); };
 $('#dk-close').onclick = closeDesk;
+// Reveal the large SETTINGS entry only while the cursor is in the lower part of the page.
+addEventListener('pointermove', e => {
+  if (!desk.hidden || e.pointerType === 'touch') return;
+  document.body.classList.toggle('desk-reveal', e.clientY > innerHeight * 0.68);
+}, { passive: true });
+addEventListener('pointerleave', () => document.body.classList.remove('desk-reveal'));
+document.documentElement.addEventListener('mouseleave', () => document.body.classList.remove('desk-reveal'));
 $('#dk-export').onclick = exportCsv;
 $('#dk-manual').onclick = manualModal;
 $('#dk-settings').onclick = settingsModal;
@@ -1034,10 +1117,10 @@ $('#dk-polling').onchange = async e => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.message || `config ${r.status}`);
     Object.assign(app.config, j.config || { pollEnabled: enabled });
-    toast(`polling ${enabled ? 'started' : 'paused'}`);
+    toast(enabled ? '轮询已开启' : '轮询已暂停');
   } catch (error) {
     app.config.pollEnabled = previous;
-    toast(`could not change polling: ${error.message}`);
+    toast(`无法切换轮询：${error.message}`);
   } finally {
     renderPollToggle();
   }
@@ -1049,15 +1132,15 @@ function exportCsv() {
   for (const a of [...app.feed].reverse()) { if (!a.codes.length) rows.push([a.name, a.email, a.checkedInAt || '', a.at, a.source, '', '', '', ...mailCols(a)]); for (const c of a.codes) rows.push([a.name, a.email, a.checkedInAt || '', a.at, a.source, c.pool, c.code, c.url, ...mailCols(a)]); }
   const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `grokbot-credits-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-  toast(`exported ${rows.length - 1} rows`);
+  toast(`已导出 ${rows.length - 1} 行`);
 }
 const modal = $('#modal'), mdBox = $('#md-box');
 function openModal(html) { mdBox.innerHTML = html; modal.hidden = false; const f = mdBox.querySelector('input,select'); if (f) f.focus(); }
 function closeModal() { modal.hidden = true; }
 modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
 function manualModal() {
-  openModal(`<h3>Manual check-in</h3><form id="mf"><div class="field"><label>name</label><input name="name" required autocomplete="off"></div><div class="field"><label>email (optional, used to match luma)</label><input name="email" type="email" autocomplete="off"></div>
-    <div class="row"><button class="primary" type="submit">check in + allocate</button><button type="button" id="mf-cancel">cancel</button></div></form>`);
+  openModal(`<h3>手动签到</h3><form id="mf"><div class="field"><label>姓名</label><input name="name" required autocomplete="off"></div><div class="field"><label>邮箱（可选，用于匹配 Luma）</label><input name="email" type="email" autocomplete="off"></div>
+    <div class="row"><button class="primary" type="submit">签到并分配</button><button type="button" id="mf-cancel">取消</button></div></form>`);
   $('#mf-cancel').onclick = closeModal;
   $('#mf').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target); const name = String(fd.get('name')).trim(), email = String(fd.get('email') || '').trim().toLowerCase();
@@ -1065,47 +1148,54 @@ function manualModal() {
     const key = email || ('manual:' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + Date.now().toString(36));
     const g = app.guests.get(key) || { key, id: key, name, email, approval: 'approved' };
     g.name = g.name || name; g.checkedInAt = g.checkedInAt || new Date().toISOString(); g.source = 'manual'; app.guests.set(key, g);
-    closeModal(); await ensureAllocated({ ...g, source: 'manual' }, { celebrate: true }); selectedKey = key; app.dirty = true; renderDesk(); toast(`checked in ${name}`);
+    closeModal(); await ensureAllocated({ ...g, source: 'manual' }, { celebrate: true }); selectedKey = key; app.dirty = true; renderDesk(); toast(`已签到 ${name}`);
   };
 }
 async function settingsModal() {
   let evOpts = '';
-  if (app.luma) { try { const evs = await listEvents(); evOpts = evs.map(ev => `<option value="${esc(ev.id)}"${ev.id === app.eventId ? ' selected' : ''}>${esc(ev.name)} — ${new Date(ev.start_at).toLocaleString()}</option>`).join(''); } catch (e) { evOpts = `<option value="">could not list events: ${esc(e.message)}</option>`; } }
-  openModal(`<h3>Settings</h3><form id="sf">
-    ${app.luma ? `<div class="field"><label>luma event</label><select name="eventId"><option value="">auto (nearest upcoming)</option>${evOpts}</select></div>` : `<div class="field"><label>luma</label><div class="dk-empty">no API key on the server → demo/manual mode. Put LUMA_API_KEY in .env and restart serve.mjs.</div></div>`}
-    <div class="field"><label>credit pools</label><select name="poolMode"><option value="A-then-B"${app.config.poolMode === 'A-then-B' ? ' selected' : ''}>one code per guest · pool A first, then B</option><option value="B-then-A"${app.config.poolMode === 'B-then-A' ? ' selected' : ''}>one code per guest · pool B first, then A</option><option value="both"${app.config.poolMode === 'both' ? ' selected' : ''}>two codes per guest · one from each pool</option></select></div>
-    <div class="field"><label>email delivery</label><div class="dk-empty">${!app.server ? 'needs serve.mjs' : !app.email || !app.email.enabled ? 'off — set RESEND_API_KEY (and EMAIL_FROM) in .env, then restart serve.mjs' : `Resend · from ${esc(app.email.from)}${app.email.dryRun ? ' · DRY RUN (nothing is sent)' : ''}${app.email.testTo ? ` · every guest email is redirected to ${esc(app.email.testTo)}` : ''}`}</div></div>
-    ${app.server && app.email && app.email.enabled ? `<div class="field"><label>send a test email (fake code) to</label><div class="row" style="margin:0"><input id="sf-testto" type="email" placeholder="you@example.com" style="flex:1" autocomplete="off"><button type="button" id="sf-test">send test</button></div></div>` : ''}
-    <div class="field"><label>poll interval (seconds)</label><input name="poll" type="number" min="2" max="60" value="${Math.round(app.config.pollMs / 1000)}"></div>
-    <div class="field"><label>cell height px (text size, reloads)</label><input name="cell" type="number" min="12" max="40" value="${G.ch}"></div>
-    <div class="row"><button class="primary" type="submit">save</button><button type="button" id="sf-cancel">cancel</button><span class="dk-spacer"></span><button type="button" class="danger" id="sf-reset">reset allocations</button></div>
-    <div class="hint">pools: A = ${esc(app.labels.A)} (${app.poolTotals.A}) · B = ${esc(app.labels.B)} (${app.poolTotals.B}). state is ${app.persist ? 'stored on the server in data/state.json' : app.mode === 'demo' ? 'not saved (demo)' : 'stored in this browser only'}.</div></form>`);
+  if (app.luma) { try { const evs = await listEvents(); evOpts = evs.map(ev => `<option value="${esc(ev.id)}"${ev.id === app.eventId ? ' selected' : ''}>${esc(ev.name)} — ${new Date(ev.start_at).toLocaleString()}</option>`).join(''); } catch (e) { evOpts = `<option value="">无法列出活动：${esc(e.message)}</option>`; } }
+  openModal(`<h3>设置</h3><form id="sf">
+    ${app.luma ? `<div class="field"><label>Luma 活动</label><select name="eventId"><option value="">自动（最近一场）</option>${evOpts}</select></div>` : `<div class="field"><label>Luma</label><div class="dk-empty">官方 API 轮询未开启（无 LUMA_API_KEY）。签到来自浏览器会话轮询：npm run checkins:on。</div></div>`}
+    ${app.server ? `<div class="field"><label>Luma 活动链接或 ID${app.event && app.event.name ? ` · 当前：${esc(app.event.name)}` : ''}</label><input name="eventRef" placeholder="https://luma.com/your-event  （留空则保持 ${esc(app.config.eventId || '当前活动')}）" autocomplete="off" spellcheck="false"></div>` : ''}
+    <div class="field"><label>兑换码池</label><select name="poolMode"><option value="A-then-B"${app.config.poolMode === 'A-then-B' ? ' selected' : ''}>每位来宾一个码 · 先 A 池再 B 池</option><option value="B-then-A"${app.config.poolMode === 'B-then-A' ? ' selected' : ''}>每位来宾一个码 · 先 B 池再 A 池</option><option value="both"${app.config.poolMode === 'both' ? ' selected' : ''}>每位来宾两个码 · A、B 各一</option></select></div>
+    <div class="field"><label>邮件发送</label><div class="dk-empty">${!app.server ? '需要 serve.mjs' : !app.email || !app.email.enabled ? '关闭 — 在 .env 设置 RESEND_API_KEY（和 EMAIL_FROM）后重启 serve.mjs' : `Resend · 发件人 ${esc(app.email.from)}${app.email.dryRun ? ' · 试跑（不会真发）' : ''}${app.email.testTo ? ` · 所有邮件改发到 ${esc(app.email.testTo)}` : ''}`}</div></div>
+    ${app.server && app.email && app.email.enabled ? `<div class="field"><label>发一封测试邮件（假兑换码）到</label><div class="row" style="margin:0"><input id="sf-testto" type="email" placeholder="you@example.com" style="flex:1" autocomplete="off"><button type="button" id="sf-test">发送测试</button></div></div>` : ''}
+    <div class="field"><label>轮询间隔（秒）</label><input name="poll" type="number" min="2" max="60" value="${Math.round(app.config.pollMs / 1000)}"></div>
+    <div class="field"><label>单元格高度 px（字号，会刷新页面）</label><input name="cell" type="number" min="12" max="40" value="${G.ch}"></div>
+    <div class="row"><button class="primary" type="submit">保存</button><button type="button" id="sf-cancel">取消</button><span class="dk-spacer"></span><button type="button" class="danger" id="sf-reset">清空分配记录</button></div>
+    <div class="hint">码池：A = ${esc(app.labels.A)}（${app.poolTotals.A}）· B = ${esc(app.labels.B)}（${app.poolTotals.B}）。状态${app.persist ? '保存在服务器 data/state.json' : app.mode === 'demo' ? '不保存（演示）' : '仅保存在本浏览器'}。</div></form>`);
   $('#sf-cancel').onclick = closeModal;
   const tb = $('#sf-test');
   if (tb) tb.onclick = async () => {
-    const to = $('#sf-testto').value.trim(); if (!to) { toast('enter an address'); return; }
-    tb.disabled = true; tb.textContent = 'sending…';
+    const to = $('#sf-testto').value.trim(); if (!to) { toast('请填写邮箱'); return; }
+    tb.disabled = true; tb.textContent = '发送中…';
     try { const r = await api('/email/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ to }) }); const j = await r.json();
-      toast(j.result ? (j.result.status === 'failed' ? `failed: ${j.result.error}` : j.result.status === 'dry' ? `dry run ok → ${to}` : `sent to ${to} (${j.result.id || 'ok'})`) : (j.message || 'error')); }
-    catch (e) { toast('error: ' + e.message); }
-    tb.disabled = false; tb.textContent = 'send test';
+      toast(j.result ? (j.result.status === 'failed' ? `失败：${j.result.error}` : j.result.status === 'dry' ? `试跑成功 → ${to}` : `已发至 ${to}（${j.result.id || 'ok'}）`) : (j.message || '错误')); }
+    catch (e) { toast('错误：' + e.message); }
+    tb.disabled = false; tb.textContent = '发送测试';
   };
   $('#sf-reset').onclick = async () => {
-    if (!confirm('Reset ALL allocations? Guests will get new codes on next sync. (A backup is written server-side.)')) return;
+    if (!confirm('确定清空全部兑换码分配？下次同步时来宾会拿到新码。（服务器会先写一份备份。）')) return;
     if (app.persist) await api('/reset', { method: 'POST' });
-    app.alloc.clear(); app.feed.length = 0; celeb.queue.length = 0; celeb.active = null; app.initial = true; saveLocal(); closeModal(); toast('allocations reset'); app.dirty = true;
+    app.alloc.clear(); app.feed.length = 0; celeb.queue.length = 0; celeb.active = null; app.initial = true; saveLocal(); closeModal(); toast('分配记录已清空'); app.dirty = true;
     if (app.mode === 'demo') { for (const g of app.guests.values()) g.checkedInAt = null; }
     if (app.mode === 'luma') { fullRefreshAt = 0; syncLuma(); }
   };
   $('#sf').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target);
     const patch = { poolMode: String(fd.get('poolMode')), pollMs: clamp(Number(fd.get('poll')) || 5, 2, 60) * 1000 };
-    if (app.luma) patch.eventId = String(fd.get('eventId') || '') || null;
+    const eventRef = String(fd.get('eventRef') || '').trim();
+    if (eventRef) {   // a pasted link wins over the dropdown; the server resolves it to an evt- id and name
+      const r = await api('/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ eventId: eventRef }) }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) { toast(j.message || '无法连接服务器'); return; }
+      patch.eventId = j.config.eventId; app.eventId = null;
+    } else if (app.luma) patch.eventId = String(fd.get('eventId') || '') || null;
     await pushConfig(patch);
     const cell = Number(fd.get('cell'));
     if (cell && cell !== G.ch) { const u = new URL(location.href); u.searchParams.set('cell', cell); location.href = u.toString(); return; }
-    if (app.luma && patch.eventId !== app.eventId) { location.reload(); return; }
-    closeModal(); toast('saved');
+    if ((app.luma || eventRef) && patch.eventId !== app.eventId) { location.reload(); return; }
+    closeModal(); toast('已保存');
   };
 }
 let toastT = 0;
@@ -1116,11 +1206,11 @@ document.addEventListener('keydown', e => {
   if (e.target.matches('input,select,textarea')) { if (e.key === 'Escape') { e.target.blur(); if (!modal.hidden) closeModal(); } return; }
   const k = e.key.toLowerCase();
   if (k === 'escape') { if (!modal.hidden) closeModal(); else if (!desk.hidden) closeDesk(); }
-  else if (k === 'd' && DESK) { e.preventDefault(); desk.hidden ? openDesk() : closeDesk(); }
-  else if (k === 'm' && DESK) { e.preventDefault(); if (desk.hidden) openDesk(); manualModal(); }
+  else if (k === 'd') { e.preventDefault(); desk.hidden ? openDesk() : closeDesk(); }
+  else if (k === 'm') { e.preventDefault(); if (desk.hidden) openDesk(); manualModal(); }
   else if (k === 'f') { e.preventDefault(); document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}); }
   else if (k === ' ' && app.mode === 'demo' && desk.hidden) { e.preventDefault(); demoCheckIn(); }
-  else if (k === 'e' && e.shiftKey && DESK) exportCsv();
+  else if (k === 'e' && e.shiftKey) { if (desk.hidden) openDesk(); exportCsv(); }
 });
 let resizeT = 0;
 addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(layoutGrid, 150); });
@@ -1139,7 +1229,7 @@ async function boot() {
   }
   if (h) { app.server = !!h.ok; app.luma = !!h.luma; Object.assign(app.config, h.config || {}); app.poolTotals = h.pools || app.poolTotals; app.email = h.email || null; app.serverPolls = !!h.serverPolls; app.headline = h.eventName || ''; app.error = ''; }
   else app.server = false;
-  const demo = params.has('demo') || (!params.has('manual') && (!app.server || (!app.luma && !app.config.eventId)));
+  const demo = params.has('demo') || (!params.has('manual') && (!app.server || (!app.luma && !app.config.eventId && !h.eventConfigured)));
   app.persist = app.server && !demo;
   if (app.persist) await syncState(); else if (!demo) loadLocal();
   for (const a of app.alloc.values()) if (!app.feed.includes(a)) app.feed.push(a);
@@ -1153,7 +1243,7 @@ async function boot() {
     app.mode = 'manual';
   } else {
     app.mode = 'luma';
-    if (app.serverPolls) { await syncState(); if (DESK) { const loadGuests = async () => { try { for (const g of (await (await api('/guests')).json()).guests || []) app.guests.set(g.key, { ...g, source: 'luma' }); app.dirty = true; } catch {} }; loadGuests(); setInterval(loadGuests, 30000); } }
+    if (app.serverPolls) { await syncState(); if (DESK) ensureGuestsLoader(); }
     else try {
       const ev = await resolveEvent(); app.eventId = ev.id; app.eventName = ev.name || ''; app.eventStart = ev.start_at;
       const gc = ev.guest_counts && ev.guest_counts.approved; if (gc) app.total = gc.guests || 0;
