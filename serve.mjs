@@ -322,8 +322,10 @@ function allocate(body) {
     checkedInAt: body.checkedInAt || null, source: body.source === 'manual' ? 'manual' : 'luma',
     at: new Date().toISOString(), codes,
   };
+  if (body.silent) a.silent = true;   // restored by a desk-console reset: no welcome animation, and no automatic email (it is resendable per guest)
   state.allocations.push(a);
-  enqueueMail(a);
+  if (a.silent) a.mail = { status: 'skipped', reason: 'restored by reset', at: a.at };
+  else enqueueMail(a);
   save();
   return a;
 }
@@ -333,7 +335,8 @@ const readBody = req => new Promise(r => { let b = ''; req.on('data', d => b += 
 // Heartbeat from luma-checkin-poller.mjs (the browser-session helper); the wall turns it into the status light.
 let poller = null;
 const pollerView = () => poller && { ...poller, ageMs: Date.now() - poller.receivedAt };
-const publicState = () => ({ allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, eventName: displayName(), event: { ...event }, poller: pollerView(), luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
+let resyncAt = 0;   // set by the desk-console reset: the poller reads the whole checked-in list from Luma once
+const publicState = () => ({ resyncAt, allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, eventName: displayName(), event: { ...event }, poller: pollerView(), luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -407,6 +410,7 @@ const server = http.createServer(async (req, res) => {
       if (KEY) { luma.fullAt = 0; schedulePoll(400); }
       return json(res, 200, { ok: true, released: a });
     }
+    if (url.pathname === '/resync' && req.method === 'POST') { resyncAt = Date.now(); if (KEY) { luma.fullAt = 0; schedulePoll(300); } return json(res, 200, { ok: true, resyncAt }); }
     if (url.pathname === '/reset' && req.method === 'POST') {
       if (state.allocations.length) fs.writeFileSync(STATE_FILE.replace(/\.json$/, `.backup-${Date.now()}.json`), JSON.stringify(state, null, 2));
       state.allocations = []; save(); luma.fullAt = 0; if (KEY) schedulePoll(500); return json(res, 200, { ok: true });

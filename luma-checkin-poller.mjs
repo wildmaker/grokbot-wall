@@ -113,9 +113,29 @@ async function launchBrowser(profileDir, headless) {
   });
 }
 
-export async function fetchCheckedInGuests({ page, eventId }) {
-  const result = await page.evaluate(async id => {
+// all=true follows the cursor to read the whole checked-in list (a desk-console reset); otherwise just the newest 50.
+export async function fetchCheckedInGuests({ page, eventId, all = false }) {
+  let cursor = null;
+  const entries = [];
+  for (let pages = 0; pages < 40; pages += 1) {
+    const body = await fetchCheckedInPage({ page, eventId, cursor });
+    entries.push(...(body.entries || []));
+    cursor = body.next_cursor || null;
+    if (!all || !body.has_more || !cursor) break;
+  }
+  return entries
+    .map(normalizeGuest)
+    .filter(guest => guest.checkedInAt)
+    .sort(
+      (left, right) =>
+        new Date(right.checkedInAt).getTime() - new Date(left.checkedInAt).getTime(),
+    );
+}
+
+async function fetchCheckedInPage({ page, eventId, cursor }) {
+  const result = await page.evaluate(async ({ id, cursor }) => {
     const url = new URL('https://api.luma.com/event/admin/get-guests');
+    if (cursor) url.searchParams.set('pagination_cursor', cursor);
     url.searchParams.set('approval_status', 'checked_in');
     url.searchParams.set('event_api_id', id);
     url.searchParams.set('pagination_limit', '50');
@@ -146,7 +166,7 @@ export async function fetchCheckedInGuests({ page, eventId }) {
     } finally {
       clearTimeout(timeout);
     }
-  }, eventId);
+  }, { id: eventId, cursor });
 
   if (result.status === 401 || result.status === 403) {
     throw new AuthenticationRequiredError();
@@ -157,16 +177,10 @@ export async function fetchCheckedInGuests({ page, eventId }) {
     );
   }
 
-  return (result.body.entries || [])
-    .map(normalizeGuest)
-    .filter(guest => guest.checkedInAt)
-    .sort(
-      (left, right) =>
-        new Date(right.checkedInAt).getTime() - new Date(left.checkedInAt).getTime(),
-    );
+  return result.body;
 }
 
-async function notifyWall(guest, { wallUrl, wallToken }) {
+async function notifyWall(guest, { wallUrl, wallToken, silent = false }) {
   const url = new URL('/allocate', wallUrl);
   const headers = { 'content-type': 'application/json', accept: 'application/json' };
   if (wallToken) headers['x-wall-key'] = wallToken;
@@ -179,6 +193,7 @@ async function notifyWall(guest, { wallUrl, wallToken }) {
       email: guest.email,
       checkedInAt: guest.checkedInAt,
       source: 'luma',
+      silent,
     }),
   });
   const body = await response.json().catch(() => ({}));
@@ -201,7 +216,7 @@ async function wallControl({ wallUrl, wallToken }) {
     if (!response.ok) {
       throw new Error(`wall ${response.status}: ${body.message || response.statusText}`);
     }
-    return { enabled: Boolean(body.config?.pollEnabled), eventId: body.config?.eventId || null };
+    return { enabled: Boolean(body.config?.pollEnabled), eventId: body.config?.eventId || null, resyncAt: Number(body.resyncAt) || 0 };
   } finally {
     clearTimeout(timeout);
   }
@@ -497,6 +512,30 @@ async function main() {
     return failedKeys.size;
   };
 
+  // Desk-console "reset": read the whole checked-in list from Luma once and hand it to the wall quietly (no welcome animation),
+  // and mark everyone as seen so the next poll only reports genuinely new check-ins.
+  let lastResyncAt = 0;
+  const resync = async () => {
+    const guests = await fetchCheckedInGuests({ page, eventId, all: true });
+    for (const guest of [...guests].reverse()) {
+      if (notifyWallEnabled) await notifyWall(guest, { wallUrl, wallToken, silent: true });
+    }
+    const seen = new Set(cache.seen);
+    for (const guest of guests) seen.add(checkInKey(guest));
+    cache = {
+      ...cache,
+      initialized: true,
+      seen: [...seen],
+      latest: guests[0] ? { id: guests[0].id, username: guests[0].username, checkedInAt: guests[0].checkedInAt } : cache.latest || null,
+      updatedAt: new Date().toISOString(),
+    };
+    writeCache(cacheFile, cache);
+    prefetchedGuests = null;
+    lastCount = guests.length;
+    lastOkAt = Date.now();
+    emit({ type: 'resync', eventId, checkedInCount: guests.length });
+  };
+
   // The desk console can point the wall at another event while we run: follow it.
   const switchEvent = async nextId => {
     const info = await resolveEvent(nextId).catch(() => ({ id: nextId, name: '' }));
@@ -552,6 +591,10 @@ async function main() {
         if (!once) {
           const control = await wallControl(wall);
           if (control.eventId && control.eventId !== eventId) await switchEvent(control.eventId);
+          if (control.resyncAt && control.resyncAt !== lastResyncAt && Date.now() - control.resyncAt < 5 * 60_000) {
+            lastResyncAt = control.resyncAt;
+            await resync();
+          } else if (control.resyncAt) lastResyncAt = control.resyncAt;
           if (!control.enabled) {
             prefetchedGuests = null;
             if (pollingActive !== false) {

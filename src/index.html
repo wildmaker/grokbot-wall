@@ -115,6 +115,7 @@
       <span class="dk-poll-track" aria-hidden="true"></span>
       <span id="dk-poll-label">轮询关</span>
     </label>
+    <button id="dk-reset" class="danger" title="清空墙上的签到名单，并从 Luma 重新读取一次最新的已签到名单（不会触发欢迎动画）">重置</button>
     <label class="dk-poll" for="dk-codes" title="开启后，新签到的来宾会分到兑换码并收到邮件；默认关闭，只做签到欢迎">
       <input id="dk-codes" type="checkbox" role="switch">
       <span class="dk-poll-track" aria-hidden="true"></span>
@@ -342,7 +343,7 @@ async function syncState() {
       if (cur) { if (JSON.stringify(cur.mail || null) !== JSON.stringify(a.mail || null)) { cur.mail = a.mail; app.dirty = true; } continue; }
       if (!app.alloc.has(a.key)) {
         const recent = Date.now() - new Date(a.at).getTime() < 45_000;
-        addAllocation(a, !app.initial && recent);
+        addAllocation(a, !app.initial && recent && !a.silent);   // silent = restored by a desk-console reset
         if (!app.guests.has(a.key)) app.guests.set(a.key, { key: a.key, name: a.name, email: a.email, checkedInAt: a.checkedInAt || a.at, source: a.source });
       }
     }
@@ -1213,6 +1214,22 @@ document.documentElement.addEventListener('mouseleave', () => document.body.clas
 $('#dk-export').onclick = exportCsv;
 $('#dk-manual').onclick = manualModal;
 $('#dk-settings').onclick = settingsModal;
+// Reset: wipe the wall's list, then read the latest checked-in list from Luma once (the poller does it; no welcome animation for those guests).
+$('#dk-reset').onclick = async () => {
+  const btn = $('#dk-reset');
+  if (!confirm('重置签到名单？\n\n· 清空墙上的签到名单和兑换码分配（服务器会先备份一份）\n· 然后从 Luma 重新读取一次最新的已签到名单，不会触发欢迎动画')) return;
+  btn.disabled = true;
+  try {
+    if (app.persist) { await api('/reset', { method: 'POST' }); await api('/resync', { method: 'POST' }); }
+    app.alloc.clear(); app.feed.length = 0; celeb.queue.length = 0; celeb.active = null; saveLocal(); app.dirty = true;
+    if (app.mode === 'demo') { for (const g of app.guests.values()) g.checkedInAt = null; }
+    if (app.mode === 'luma' && !app.persist) { app.initial = true; fullRefreshAt = 0; syncLuma(); }
+    const p = app.poller, alive = p && p.ageMs + (Date.now() - app.pollerAt) < 10_000;
+    toast(!app.persist ? '已重置' : app.serverPolls || alive ? '已重置 · 正在从 Luma 读取最新签到名单…' : '已重置 · 轮询程序没在运行，请运行 npm run checkins:on，启动后会自动读取');
+    for (const ms of [1200, 2500, 5000, 9000]) setTimeout(syncState, ms);
+  } catch (e) { toast('重置失败：' + e.message); }
+  btn.disabled = false;
+};
 $('#dk-polling').onchange = async e => {
   const input = e.currentTarget, enabled = input.checked, previous = !enabled;
   input.disabled = true;
@@ -1336,7 +1353,7 @@ async function settingsModal() {
     </div>
     <div class="field"><label>轮询间隔（秒）</label><input name="poll" type="number" min="2" max="60" value="${Math.round(app.config.pollMs / 1000)}"></div>
     <div class="field"><label>单元格高度 px（字号，会刷新页面）</label><input name="cell" type="number" min="12" max="40" value="${G.ch}"></div>
-    <div class="row"><button class="primary" type="submit">保存</button><button type="button" id="sf-cancel">取消</button><span class="dk-spacer"></span><button type="button" class="danger" id="sf-reset">清空分配记录</button></div>
+    <div class="row"><button class="primary" type="submit">保存</button><button type="button" id="sf-cancel">取消</button></div>
     <div class="hint">状态${app.persist ? '保存在服务器 data/state.json' : app.mode === 'demo' ? '不保存（演示）' : '仅保存在本浏览器'}。</div></form>`);
   renderLumaCard();
   $('#sf-cancel').onclick = closeModal;
@@ -1349,13 +1366,6 @@ async function settingsModal() {
       toast(j.result ? (j.result.status === 'failed' ? `失败：${j.result.error}` : j.result.status === 'dry' ? `试跑成功 → ${to}` : `已发至 ${to}（${j.result.id || 'ok'}）`) : (j.message || '错误')); }
     catch (e) { toast('错误：' + e.message); }
     tb.disabled = false; tb.textContent = '发送测试';
-  };
-  $('#sf-reset').onclick = async () => {
-    if (!confirm('确定清空全部兑换码分配？下次同步时来宾会拿到新码。（服务器会先写一份备份。）')) return;
-    if (app.persist) await api('/reset', { method: 'POST' });
-    app.alloc.clear(); app.feed.length = 0; celeb.queue.length = 0; celeb.active = null; app.initial = true; saveLocal(); closeModal(); toast('分配记录已清空'); app.dirty = true;
-    if (app.mode === 'demo') { for (const g of app.guests.values()) g.checkedInAt = null; }
-    if (app.mode === 'luma') { fullRefreshAt = 0; syncLuma(); }
   };
   $('#sf').onsubmit = async e => {
     e.preventDefault(); const fd = new FormData(e.target);
