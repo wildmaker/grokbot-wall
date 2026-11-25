@@ -11,3 +11,5 @@ cloudflared/*.json
 cloudflared/config.yml
 data/codes.json
 data/archive/
+data/state.corrupt-*.json
+data/state.json.*.tmp

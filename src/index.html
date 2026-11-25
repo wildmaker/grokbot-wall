@@ -95,6 +95,11 @@
   #desk-open:hover,#desk-open:focus-visible{color:#fff;border-color:#fff}
   #desk-open:focus-visible{outline:2px solid #fff;outline-offset:3px}
   body.desk-open #desk-open{display:none}
+  /* Always-visible corner entry (the big one above still reveals on bottom hover). */
+  #desk-corner{position:fixed;right:20px;bottom:20px;z-index:7;padding:11px 18px;background:rgba(6,7,10,.92);border:1px solid var(--accent);color:var(--accent);font:700 16px/1 "PingFang SC","Hiragino Sans GB","Microsoft YaHei",var(--mono);letter-spacing:.1em;cursor:pointer;box-shadow:0 8px 28px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.08);text-transform:none;transition:color .12s ease,border-color .12s ease,background .12s ease}
+  #desk-corner:hover,#desk-corner:focus-visible{color:#fff;border-color:#fff;background:rgba(11,18,32,.96)}
+  #desk-corner:focus-visible{outline:2px solid #fff;outline-offset:3px}
+  body.desk-open #desk-corner{display:none}
 </style>
 </head>
 <body>
@@ -104,6 +109,7 @@
   设置
   <span class="desk-open-sub">签到控制台 · 按 <kbd>D</kbd></span>
 </button>
+<button id="desk-corner" type="button" title="打开设置（D）" aria-label="打开设置">⚙ 设置</button>
 
 <div id="desk" hidden>
   <div class="dk-head">
@@ -1203,6 +1209,7 @@ function closeDesk() {
   document.body.classList.remove('desk-open');
 }
 $('#desk-open').onclick = openDesk;
+$('#desk-corner').onclick = openDesk;
 $('#dk-close').onclick = closeDesk;
 // Reveal the large SETTINGS entry only while the cursor is in the lower part of the page.
 addEventListener('pointermove', e => {

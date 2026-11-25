@@ -515,10 +515,12 @@ async function main() {
   // Desk-console "reset": read the whole checked-in list from Luma once and hand it to the wall quietly (no welcome animation),
   // and mark everyone as seen so the next poll only reports genuinely new check-ins.
   let lastResyncAt = 0;
-  const resync = async () => {
+  const resync = async resyncAt => {
     const guests = await fetchCheckedInGuests({ page, eventId, all: true });
     for (const guest of [...guests].reverse()) {
-      if (notifyWallEnabled) await notifyWall(guest, { wallUrl, wallToken, silent: true });
+      // whoever checked in AFTER the reset click is a real new check-in and gets the welcome; everyone earlier is just restored
+      const silent = new Date(guest.checkedInAt).getTime() < resyncAt;
+      if (notifyWallEnabled) await notifyWall(guest, { wallUrl, wallToken, silent });
     }
     const seen = new Set(cache.seen);
     for (const guest of guests) seen.add(checkInKey(guest));
@@ -593,7 +595,7 @@ async function main() {
           if (control.eventId && control.eventId !== eventId) await switchEvent(control.eventId);
           if (control.resyncAt && control.resyncAt !== lastResyncAt && Date.now() - control.resyncAt < 5 * 60_000) {
             lastResyncAt = control.resyncAt;
-            await resync();
+            await resync(control.resyncAt);
           } else if (control.resyncAt) lastResyncAt = control.resyncAt;
           if (!control.enabled) {
             prefetchedGuests = null;

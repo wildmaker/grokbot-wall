@@ -27,10 +27,21 @@ const CODES = JSON.parse(fs.readFileSync(path.join(ROOT, CODES_FILE), 'utf8'));
 const STATE_FILE = path.join(ROOT, 'data/state.json');
 
 let state = { allocations: [], config: { eventId: null, poolMode: 'A-then-B', pollMs: 5000, pollEnabled: false, sendCodes: false } };   // sendCodes: off unless the desk-console switch is flipped on
-try { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); state = { ...state, ...s, config: { ...state.config, ...(s.config || {}) } }; } catch {}
+let stateWarning = '';   // shown as a red banner on the wall when state.json could not be read
+let resyncAt = 0;        // set by the desk-console reset: check-ins from before this moment are "restored" (silent: no welcome animation, no automatic email)
+try { const s = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); state = { ...state, ...s, config: { ...state.config, ...(s.config || {}) } }; }
+catch (e) {
+  if (e.code !== 'ENOENT') {   // a missing file is a fresh start; anything else must not silently become an empty list
+    const aside = STATE_FILE.replace(/\.json$/, `.corrupt-${Date.now()}.json`);
+    try { fs.renameSync(STATE_FILE, aside); } catch {}
+    stateWarning = `data/state.json 无法读取（${e.message}），已另存为 ${path.basename(aside)}。名单从空开始：请点控制台的「重置」从 Luma 重新读取；手动签到的人要靠另存的文件找回`;
+    console.error(`  ✗ ${stateWarning}`);
+  }
+}
 // Polling always boots OFF (flip it on at the venue) unless LUMA_POLL_ON_START=1, so a state.json left over from an earlier event can never start polling by itself.
 state.config.pollEnabled = /^(1|true|yes|on)$/i.test(process.env.LUMA_POLL_ON_START || '');
-const save = () => fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+// write-then-rename: a crash or power cut mid-write leaves the previous state.json intact instead of a half-written file
+const save = () => { const tmp = `${STATE_FILE}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(state, null, 2)); fs.renameSync(tmp, STATE_FILE); };
 // backfill code indexes on allocations made before `n` existed
 for (const a of state.allocations) for (const c of a.codes || []) if (!c.n) { const i = (CODES[c.pool] || []).findIndex(x => x.code === c.code); if (i >= 0) c.n = i + 1; }
 
@@ -220,7 +231,7 @@ async function pollLuma() {
       const j = await lumaGet('/v1/events/guests/list', { event_id: luma.event.id, approval_status: 'approved', pagination_limit: 50, sort_column: 'checked_in_at', sort_direction: 'desc nulls last', pagination_cursor: cursor });
       for (const e of j.entries || []) {
         const g = normGuest(e); luma.guests.set(g.key, g); count++;
-        if (g.checkedInAt) { if (!state.allocations.some(a => a.key === g.key)) { const a = allocate({ ...g, source: 'luma' }); console.log(`  ✓ check-in ${g.name}  → ${a.codes.map(c => c.pool + '#' + c.n).join('+') || 'no codes left'}`); } }
+        if (g.checkedInAt) { if (!state.allocations.some(a => a.key === g.key)) { const a = allocate({ ...g, source: 'luma', silent: Boolean(resyncAt && g.checkedInAt && new Date(g.checkedInAt).getTime() < resyncAt) }); console.log(`  ✓ check-in ${g.name}  → ${a.codes.map(c => c.pool + '#' + c.n).join('+') || 'no codes left'}`); } }
         else if (!full) stop = true;
       }
       cursor = j.next_cursor; pages++; if (!j.has_more || stop || pages > 40) break;
@@ -335,8 +346,7 @@ const readBody = req => new Promise(r => { let b = ''; req.on('data', d => b += 
 // Heartbeat from luma-checkin-poller.mjs (the browser-session helper); the wall turns it into the status light.
 let poller = null;
 const pollerView = () => poller && { ...poller, ageMs: Date.now() - poller.receivedAt };
-let resyncAt = 0;   // set by the desk-console reset: the poller reads the whole checked-in list from Luma once
-const publicState = () => ({ resyncAt, allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, eventName: displayName(), event: { ...event }, poller: pollerView(), luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
+const publicState = () => ({ resyncAt, warning: stateWarning, allocations: state.allocations, config: state.config, pools: { A: CODES.A.length, B: CODES.B.length }, labels: CODES.labels, lastWebhookAt, eventName: displayName(), event: { ...event }, poller: pollerView(), luma: { serverPolls: Boolean(KEY), event: luma.event, total: luma.total, lastSync: luma.lastSync, error: luma.error } });
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -413,7 +423,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/resync' && req.method === 'POST') { resyncAt = Date.now(); if (KEY) { luma.fullAt = 0; schedulePoll(300); } return json(res, 200, { ok: true, resyncAt }); }
     if (url.pathname === '/reset' && req.method === 'POST') {
       if (state.allocations.length) fs.writeFileSync(STATE_FILE.replace(/\.json$/, `.backup-${Date.now()}.json`), JSON.stringify(state, null, 2));
-      state.allocations = []; save(); luma.fullAt = 0; if (KEY) schedulePoll(500); return json(res, 200, { ok: true });
+      state.allocations = []; stateWarning = ''; resyncAt = Date.now(); save(); luma.fullAt = 0; if (KEY) schedulePoll(500); return json(res, 200, { ok: true });
     }
     if (url.pathname.startsWith('/luma/')) {
       if (!KEY) return json(res, 503, { message: 'LUMA_API_KEY not set on the server' });
